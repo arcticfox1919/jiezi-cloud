@@ -103,16 +103,16 @@ pub struct FileMetadata {
 /// ```
 #[derive(Debug, Default)]
 pub struct FileNodeBuilder {
-    id:           Option<FileId>,
-    parent_id:    Option<FileId>,
-    space_id:     Option<SpaceId>,
-    owner_id:     Option<UserId>,
-    name:         Option<String>,
-    node_type:    Option<NodeType>,
-    size:         u64,
-    mime_type:    Option<MimeType>,
+    id: Option<FileId>,
+    parent_id: Option<FileId>,
+    space_id: Option<SpaceId>,
+    owner_id: Option<UserId>,
+    name: Option<String>,
+    node_type: Option<NodeType>,
+    size: u64,
+    mime_type: Option<MimeType>,
     content_hash: Option<String>,
-    metadata:     FileMetadata,
+    metadata: FileMetadata,
 }
 
 impl FileNodeBuilder {
@@ -179,19 +179,19 @@ impl FileNodeBuilder {
     pub fn build(self) -> FileNode {
         let now = Utc::now();
         FileNode {
-            id:           self.id.unwrap_or_else(FileId::new),
-            parent_id:    self.parent_id,
-            space_id:     self.space_id.expect("space_id is required"),
-            owner_id:     self.owner_id.expect("owner_id is required"),
-            name:         self.name.expect("name is required"),
-            node_type:    self.node_type.expect("node_type is required"),
-            size:         self.size,
-            mime_type:    self.mime_type,
+            id: self.id.unwrap_or_else(FileId::new),
+            parent_id: self.parent_id,
+            space_id: self.space_id.expect("space_id is required"),
+            owner_id: self.owner_id.expect("owner_id is required"),
+            name: self.name.expect("name is required"),
+            node_type: self.node_type.expect("node_type is required"),
+            size: self.size,
+            mime_type: self.mime_type,
             content_hash: self.content_hash,
-            created_at:   now,
-            updated_at:   now,
-            deleted_at:   None,
-            metadata:     self.metadata,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+            metadata: self.metadata,
         }
     }
 }
@@ -217,8 +217,8 @@ mod tests {
     #[test]
     fn test_builder_creates_valid_node() {
         let n = make_file_node();
-        assert_eq!(n.name,      "report.pdf");
-        assert_eq!(n.size,      1_024);
+        assert_eq!(n.name, "report.pdf");
+        assert_eq!(n.size, 1_024);
         assert_eq!(n.node_type, NodeType::File);
         assert!(n.deleted_at.is_none());
     }
@@ -248,7 +248,7 @@ mod tests {
         let node = make_file_node();
         let json = serde_json::to_string(&node).expect("serialize");
         let back: FileNode = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(node.id,   back.id);
+        assert_eq!(node.id, back.id);
         assert_eq!(node.name, back.name);
         assert_eq!(node.size, back.size);
     }

@@ -79,15 +79,15 @@ mod tests {
         download_count: u32,
     ) -> ShareLink {
         ShareLink {
-            id:             ShareId::new(),
-            file_id:        FileId::new(),
-            created_by:     UserId::new(),
-            access:         ShareAccess::ReadOnly,
-            password_hash:  None,
+            id: ShareId::new(),
+            file_id: FileId::new(),
+            created_by: UserId::new(),
+            access: ShareAccess::ReadOnly,
+            password_hash: None,
             expires_at,
             download_limit,
             download_count,
-            created_at:     Utc::now(),
+            created_at: Utc::now(),
         }
     }
 
@@ -146,7 +146,7 @@ mod tests {
         let link = make_link(None, Some(10), 3);
         let json = serde_json::to_string(&link).expect("serialize");
         let back: ShareLink = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(link.id,             back.id);
+        assert_eq!(link.id, back.id);
         assert_eq!(link.download_limit, back.download_limit);
         assert_eq!(link.download_count, back.download_count);
     }

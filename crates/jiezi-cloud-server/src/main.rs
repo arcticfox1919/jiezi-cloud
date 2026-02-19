@@ -5,7 +5,7 @@
 //! are wired together here via dependency injection.
 
 use tracing::info;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

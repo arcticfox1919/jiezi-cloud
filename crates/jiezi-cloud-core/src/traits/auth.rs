@@ -89,9 +89,9 @@ pub trait AuthService: Send + Sync {
         if self.check_permission(user_id, action, resource).await? {
             Ok(())
         } else {
-            Err(crate::error::AppError::Forbidden(
-                format!("user {user_id} is not authorised for action {action:?} on {resource:?}"),
-            ))
+            Err(crate::error::AppError::Forbidden(format!(
+                "user {user_id} is not authorised for action {action:?} on {resource:?}"
+            )))
         }
     }
 }

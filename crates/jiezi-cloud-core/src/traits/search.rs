@@ -39,8 +39,12 @@ pub struct SearchQuery {
     pub mime_filter: Option<String>,
 }
 
-fn default_page() -> u32 { 1 }
-fn default_per_page() -> u32 { 20 }
+fn default_page() -> u32 {
+    1
+}
+fn default_per_page() -> u32 {
+    20
+}
 
 /// A single result item returned from a search.
 #[derive(Debug, Clone, Serialize, Deserialize)]

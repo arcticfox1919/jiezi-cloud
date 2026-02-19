@@ -32,14 +32,12 @@ pub struct Space {
 impl Space {
     /// Return `true` if the space has a storage quota and it is exceeded.
     pub fn is_quota_exceeded(&self) -> bool {
-        self.storage_quota
-            .map_or(false, |quota| self.storage_used > quota)
+        self.storage_quota.map_or(false, |quota| self.storage_used > quota)
     }
 
     /// Return remaining storage capacity in bytes, or `None` if unlimited.
     pub fn remaining_quota(&self) -> Option<u64> {
-        self.storage_quota
-            .map(|quota| quota.saturating_sub(self.storage_used))
+        self.storage_quota.map(|quota| quota.saturating_sub(self.storage_used))
     }
 }
 
@@ -65,15 +63,15 @@ mod tests {
 
     fn make_space(quota: Option<u64>, used: u64) -> Space {
         Space {
-            id:            SpaceId::new(),
-            name:          "My Files".into(),
-            description:   None,
-            owner_id:      UserId::new(),
-            root_id:       FileId::new(),
+            id: SpaceId::new(),
+            name: "My Files".into(),
+            description: None,
+            owner_id: UserId::new(),
+            root_id: FileId::new(),
             storage_quota: quota,
-            storage_used:  used,
-            created_at:    Utc::now(),
-            updated_at:    Utc::now(),
+            storage_used: used,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         }
     }
 
@@ -110,18 +108,18 @@ mod tests {
     #[test]
     fn test_space_serde_round_trip() {
         let space = make_space(Some(1_073_741_824), 512_000);
-        let json  = serde_json::to_string(&space).expect("serialize");
+        let json = serde_json::to_string(&space).expect("serialize");
         let back: Space = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(space.id,   back.id);
+        assert_eq!(space.id, back.id);
         assert_eq!(space.name, back.name);
     }
 
     #[test]
     fn test_space_member_serde_round_trip() {
         let member = SpaceMember {
-            space_id:  SpaceId::new(),
-            user_id:   UserId::new(),
-            role:      Role::Member,
+            space_id: SpaceId::new(),
+            user_id: UserId::new(),
+            role: Role::Member,
             joined_at: Utc::now(),
         };
         let json = serde_json::to_string(&member).expect("serialize");

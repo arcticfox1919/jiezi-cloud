@@ -95,19 +95,19 @@ mod tests {
 
     fn make_session(completed: u32, total: u32) -> UploadSession {
         UploadSession {
-            upload_id:        "sess-abc123".into(),
-            file_id:          FileId::new(),
-            total_size:       1_000_000,
+            upload_id: "sess-abc123".into(),
+            file_id: FileId::new(),
+            total_size: 1_000_000,
             completed_chunks: completed,
-            total_chunks:     total,
-            created_at:       Utc::now(),
+            total_chunks: total,
+            created_at: Utc::now(),
         }
     }
 
     #[test]
     fn test_chunk_info_serde_round_trip() {
         let chunk = ChunkInfo { hash: "deadbeef".into(), size: 4096, offset: 0, index: 0 };
-        let json  = serde_json::to_string(&chunk).expect("serialize");
+        let json = serde_json::to_string(&chunk).expect("serialize");
         let back: ChunkInfo = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(chunk, back);
     }
@@ -143,12 +143,12 @@ mod tests {
         let sr = StorageRef {
             chunk_hash: "abc123".into(),
             backend_id: BackendId::new("local"),
-            key:        "ab/abc123456".into(),
-            size:       4096,
+            key: "ab/abc123456".into(),
+            size: 4096,
         };
         let json = serde_json::to_string(&sr).expect("serialize");
         let back: StorageRef = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(sr.chunk_hash, back.chunk_hash);
-        assert_eq!(sr.key,        back.key);
+        assert_eq!(sr.key, back.key);
     }
 }

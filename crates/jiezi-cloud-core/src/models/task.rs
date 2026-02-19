@@ -37,25 +37,15 @@ impl TaskStatus {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TaskKind {
     /// Index the content of a file for full-text search.
-    FileIndex {
-        file_id: String,
-    },
+    FileIndex { file_id: String },
     /// Generate a thumbnail image for a file.
-    ThumbnailGeneration {
-        file_id: String,
-    },
+    ThumbnailGeneration { file_id: String },
     /// Transcode a video file to a target format.
-    VideoTranscode {
-        file_id: String,
-        target_format: String,
-    },
+    VideoTranscode { file_id: String, target_format: String },
     /// Rebuild the entire search index from the database.
     SearchIndexRebuild,
     /// Replicate a chunk to an additional storage backend.
-    StorageReplication {
-        chunk_hash: String,
-        target_backend: String,
-    },
+    StorageReplication { chunk_hash: String, target_backend: String },
 }
 
 // ─── BackgroundTask ───────────────────────────────────────────────────────────
@@ -90,15 +80,15 @@ mod tests {
 
     fn make_task(status: TaskStatus) -> BackgroundTask {
         BackgroundTask {
-            id:            TaskId::new(),
-            kind:          TaskKind::SearchIndexRebuild,
+            id: TaskId::new(),
+            kind: TaskKind::SearchIndexRebuild,
             status,
-            owner_id:      Some(UserId::new()),
-            progress:      0,
+            owner_id: Some(UserId::new()),
+            progress: 0,
             error_message: None,
-            created_at:    Utc::now(),
-            updated_at:    Utc::now(),
-            completed_at:  None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
         }
     }
 
@@ -144,7 +134,7 @@ mod tests {
         let task = make_task(TaskStatus::Running);
         let json = serde_json::to_string(&task).expect("serialize task");
         let back: BackgroundTask = serde_json::from_str(&json).expect("deserialize task");
-        assert_eq!(task.id,     back.id);
+        assert_eq!(task.id, back.id);
         assert_eq!(task.status, back.status);
     }
 }

@@ -1,34 +1,17 @@
 # Rustfmt configuration for Jiezi Cloud
 # https://rust-lang.github.io/rustfmt/
+#
+# Only stable options are used here so that `cargo fmt` works with stable Rust.
+# Nightly-only options (imports_granularity, group_imports, brace_style, etc.)
+# are intentionally excluded to avoid CI failures on the stable toolchain.
 
-edition = "2021"
+edition = "2024"
 
 # ── Indentation & line width ──────────────────────────────────────────────────
-tab_spaces        = 4
-max_width         = 100
+tab_spaces           = 4
+max_width            = 100
 use_small_heuristics = "Max"
 
 # ── Imports ───────────────────────────────────────────────────────────────────
-imports_granularity = "Crate"   # Group all imports from the same crate
-group_imports       = "StdExternalCrate"   # std → external → local
-reorder_imports     = true
-reorder_modules     = true
-
-# ── Trailing commas ───────────────────────────────────────────────────────────
-trailing_comma            = "Vertical"
-trailing_semicolon        = false
-
-# ── Braces & spacing ─────────────────────────────────────────────────────────
-brace_style          = "SameLineSCBOAE"
-space_before_colon   = false
-space_after_colon    = true
-
-# ── Comments ──────────────────────────────────────────────────────────────────
-wrap_comments        = true
-comment_width        = 100
-normalize_comments   = true
-format_code_in_doc_comments = true
-
-# ── Functions & structs ───────────────────────────────────────────────────────
-fn_params_layout   = "Tall"
-struct_lit_single_line = false
+reorder_imports = true
+reorder_modules = true
