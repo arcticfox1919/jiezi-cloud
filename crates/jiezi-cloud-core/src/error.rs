@@ -108,14 +108,16 @@ mod tests {
     #[test]
     fn test_app_result_ok_carries_value() {
         let result: AppResult<u32> = Ok(99);
-        assert_eq!(result.unwrap(), 99);
+        assert!(matches!(result, Ok(99)));
     }
 
     #[test]
     fn test_app_result_err_is_accessible() {
         let result: AppResult<u32> = Err(AppError::Forbidden("read-only space".to_owned()));
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let Err(err) = result else {
+            panic!("expected Err variant");
+        };
         assert!(err.to_string().contains("forbidden"));
     }
 }

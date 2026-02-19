@@ -47,15 +47,15 @@ pub struct ShareLink {
 impl ShareLink {
     /// Return `true` if this link is still valid at the given point in time.
     pub fn is_valid_at(&self, now: &DateTime<Utc>) -> bool {
-        if let Some(ref exp) = self.expires_at {
-            if now > exp {
-                return false;
-            }
+        if let Some(ref exp) = self.expires_at
+            && now > exp
+        {
+            return false;
         }
-        if let Some(limit) = self.download_limit {
-            if self.download_count >= limit {
-                return false;
-            }
+        if let Some(limit) = self.download_limit
+            && self.download_count >= limit
+        {
+            return false;
         }
         true
     }

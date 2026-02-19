@@ -179,7 +179,7 @@ impl FileNodeBuilder {
     pub fn build(self) -> FileNode {
         let now = Utc::now();
         FileNode {
-            id: self.id.unwrap_or_else(FileId::new),
+            id: self.id.unwrap_or_default(),
             parent_id: self.parent_id,
             space_id: self.space_id.expect("space_id is required"),
             owner_id: self.owner_id.expect("owner_id is required"),

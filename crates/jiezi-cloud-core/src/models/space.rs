@@ -32,7 +32,7 @@ pub struct Space {
 impl Space {
     /// Return `true` if the space has a storage quota and it is exceeded.
     pub fn is_quota_exceeded(&self) -> bool {
-        self.storage_quota.map_or(false, |quota| self.storage_used > quota)
+        self.storage_quota.is_some_and(|quota| self.storage_used > quota)
     }
 
     /// Return remaining storage capacity in bytes, or `None` if unlimited.

@@ -225,7 +225,7 @@ impl<T> PageResponse<T> {
         if self.per_page == 0 {
             return 0;
         }
-        (self.total + u64::from(self.per_page) - 1) / u64::from(self.per_page)
+        self.total.div_ceil(u64::from(self.per_page))
     }
 
     /// Return `true` if there is a next page.
