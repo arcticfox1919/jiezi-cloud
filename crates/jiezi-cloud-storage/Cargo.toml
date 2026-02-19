@@ -1,0 +1,18 @@
+[package]
+name    = "jiezi-cloud-storage"
+version = "0.1.0"
+edition = "2024"
+description = "Storage backends (local filesystem, S3/MinIO, WebDAV) and CDC chunking"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+bytes.workspace            = true
+serde.workspace            = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+uuid.workspace             = true
+
+[dev-dependencies]
+tokio = { workspace = true }

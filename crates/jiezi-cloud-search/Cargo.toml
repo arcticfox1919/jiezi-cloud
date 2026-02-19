@@ -1,0 +1,17 @@
+[package]
+name    = "jiezi-cloud-search"
+version = "0.1.0"
+edition = "2024"
+description = "Full-text search engine built on Tantivy with Chinese tokenization support"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+serde.workspace            = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+tantivy.workspace          = true
+
+[dev-dependencies]
+tokio = { workspace = true }

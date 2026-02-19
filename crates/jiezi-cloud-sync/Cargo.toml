@@ -1,0 +1,16 @@
+[package]
+name    = "jiezi-cloud-sync"
+version = "0.1.0"
+edition = "2024"
+description = "Multi-device sync engine with incremental delta and conflict resolution"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+serde.workspace            = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+
+[dev-dependencies]
+tokio = { workspace = true }

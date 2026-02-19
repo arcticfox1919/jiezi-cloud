@@ -1,0 +1,30 @@
+[package]
+name    = "jiezi-cloud-server"
+version = "0.1.0"
+edition = "2024"
+description = "Main server binary: Actix-web HTTP API, WebSocket and QUIC file transfer"
+
+[[bin]]
+name = "jiezi-cloud-server"
+path = "src/main.rs"
+
+[dependencies]
+jiezi-cloud-core.workspace      = true
+jiezi-cloud-auth.workspace      = true
+jiezi-cloud-storage.workspace   = true
+jiezi-cloud-vfs.workspace       = true
+jiezi-cloud-search.workspace    = true
+jiezi-cloud-preview.workspace   = true
+jiezi-cloud-share.workspace     = true
+jiezi-cloud-ai.workspace        = true
+jiezi-cloud-sync.workspace      = true
+jiezi-cloud-migration.workspace = true
+actix-web.workspace             = true
+actix-rt.workspace              = true
+config.workspace                = true
+serde.workspace                 = true
+serde_json.workspace            = true
+tokio.workspace                 = true
+tracing.workspace               = true
+tracing-subscriber.workspace    = true
+anyhow.workspace                = true

@@ -1,0 +1,17 @@
+[package]
+name    = "jiezi-cloud-ai"
+version = "0.1.0"
+edition = "2024"
+description = "AI features: RAG retrieval, document embedding, auto-summary and intelligent classification"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+serde.workspace            = true
+serde_json.workspace       = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+
+[dev-dependencies]
+tokio = { workspace = true }

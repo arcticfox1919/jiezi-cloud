@@ -1,0 +1,23 @@
+# Build artifacts
+/target/
+
+# Cargo lock is committed for binaries, ignored for libraries
+# (we keep it since this workspace produces a binary)
+
+# IDE & editor
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Temporary files
+build_output.txt

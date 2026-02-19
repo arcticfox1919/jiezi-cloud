@@ -1,0 +1,15 @@
+[package]
+name    = "jiezi-cloud-migration"
+version = "0.1.0"
+edition = "2024"
+description = "Database migration management for SQLite and PostgreSQL"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+anyhow.workspace           = true
+sqlx.workspace             = true
+tokio.workspace            = true
+tracing.workspace          = true
+
+[dev-dependencies]
+tokio = { workspace = true }

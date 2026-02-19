@@ -1,0 +1,96 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/jiezi-cloud-core",
+    "crates/jiezi-cloud-auth",
+    "crates/jiezi-cloud-storage",
+    "crates/jiezi-cloud-vfs",
+    "crates/jiezi-cloud-search",
+    "crates/jiezi-cloud-preview",
+    "crates/jiezi-cloud-share",
+    "crates/jiezi-cloud-ai",
+    "crates/jiezi-cloud-sync",
+    "crates/jiezi-cloud-server",
+    "crates/jiezi-cloud-migration",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Workspace-wide dependency versions.
+# Individual crates opt-in via `dep.workspace = true`.
+# ─────────────────────────────────────────────────────────────────────────────
+[workspace.dependencies]
+
+# ── Async runtime ─────────────────────────────────────────────────────────────
+tokio          = { version = "1",    features = ["full"] }
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+serde          = { version = "1",    features = ["derive"] }
+serde_json     = "1"
+
+# ── IDs & Time ────────────────────────────────────────────────────────────────
+uuid           = { version = "1",    features = ["v7", "serde"] }
+chrono         = { version = "0.4",  features = ["serde"] }
+
+# ── Error handling ────────────────────────────────────────────────────────────
+thiserror      = "2"
+anyhow         = "1"
+
+# ── Observability ─────────────────────────────────────────────────────────────
+tracing              = "0.1"
+tracing-subscriber   = { version = "0.3", features = ["env-filter", "json"] }
+
+# ── Async trait support ───────────────────────────────────────────────────────
+async-trait    = "0.1"
+
+# ── Byte buffers ──────────────────────────────────────────────────────────────
+bytes          = "1"
+
+# ── HTTP server (Actix-web) ───────────────────────────────────────────────────
+actix-web      = "4"
+actix-rt       = "2"
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-native-tls",
+    "sqlite",
+    "postgres",
+    "uuid",
+    "chrono",
+    "migrate",
+    "macros",
+] }
+
+# ── Authentication ────────────────────────────────────────────────────────────
+argon2         = "0.5"
+jsonwebtoken   = "9"
+rand           = "0.9"
+
+# ── Config ────────────────────────────────────────────────────────────────────
+config         = { version = "0.14", features = ["toml"] }
+
+# ── Search ────────────────────────────────────────────────────────────────────
+tantivy        = "0.22"
+
+# ── Crate inter-dependencies ──────────────────────────────────────────────────
+jiezi-cloud-core      = { path = "crates/jiezi-cloud-core" }
+jiezi-cloud-auth      = { path = "crates/jiezi-cloud-auth" }
+jiezi-cloud-storage   = { path = "crates/jiezi-cloud-storage" }
+jiezi-cloud-vfs       = { path = "crates/jiezi-cloud-vfs" }
+jiezi-cloud-search    = { path = "crates/jiezi-cloud-search" }
+jiezi-cloud-preview   = { path = "crates/jiezi-cloud-preview" }
+jiezi-cloud-share     = { path = "crates/jiezi-cloud-share" }
+jiezi-cloud-ai        = { path = "crates/jiezi-cloud-ai" }
+jiezi-cloud-sync      = { path = "crates/jiezi-cloud-sync" }
+jiezi-cloud-migration = { path = "crates/jiezi-cloud-migration" }
+
+# ── Workspace-wide lints ──────────────────────────────────────────────────────
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic      = { level = "warn", priority = -1 }
+# Allow the most verbose pedantic lints that add noise without value
+module_name_repetitions = "allow"
+must_use_candidate      = "allow"
+missing_errors_doc      = "allow"

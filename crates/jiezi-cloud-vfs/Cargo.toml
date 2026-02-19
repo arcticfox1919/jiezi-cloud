@@ -1,0 +1,19 @@
+[package]
+name    = "jiezi-cloud-vfs"
+version = "0.1.0"
+edition = "2024"
+description = "Virtual file system: directory tree, metadata, versioning and trash"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+chrono.workspace           = true
+serde.workspace            = true
+sqlx.workspace             = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+uuid.workspace             = true
+
+[dev-dependencies]
+tokio = { workspace = true }

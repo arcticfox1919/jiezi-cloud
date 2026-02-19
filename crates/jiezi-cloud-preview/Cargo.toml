@@ -1,0 +1,17 @@
+[package]
+name    = "jiezi-cloud-preview"
+version = "0.1.0"
+edition = "2024"
+description = "File preview: PDF rendering, Office conversion, thumbnails and video streaming"
+
+[dependencies]
+jiezi-cloud-core.workspace = true
+async-trait.workspace      = true
+bytes.workspace            = true
+serde.workspace            = true
+thiserror.workspace        = true
+tokio.workspace            = true
+tracing.workspace          = true
+
+[dev-dependencies]
+tokio = { workspace = true }
