@@ -117,9 +117,12 @@
 - [x] `handle_download_stream`: open unidirectional stream, stream bytes from `DownloadService`
 - [x] JTP/1 protocol: parallel chunk streams + sliding-window (`parallel_streams`, `window_size` negotiated in `UPLOAD_ACCEPT` / `DOWNLOAD_INFO`)
 - [x] `JtpTransport` abstraction trait (`max_parallel_streams`: QUIC=8, WebSocket=1, test=1)
-- [ ] Route files ≥ 20 MiB (`large_file_threshold_bytes`) to QUIC transport (HTTP layer wiring)
-- [ ] WebSocket fallback transport (`WsTransport` impl) when QUIC is unavailable
-- [ ] QUIC unit tests (loopback client/server in `#[tokio::test]`)
+- [x] Route files ≥ 20 MiB to QUIC transport: native clients → HTTP 426 `QUIC_REQUIRED`; web clients → HTTP 413 `FILE_TOO_LARGE_FOR_WEB`
+- [x] `TunnelConfig` + per-client web upload limits (`web_upload_max_bytes_no_tunnel` 500 MiB, `web_upload_max_bytes_with_tunnel` 100 MiB)
+- [x] `AppState` routing fields (`quic_port`, `tunnel_enabled`, `large_file_threshold`, web limits)
+- [x] WebSocket fallback transport (`WsTransport` — `!Send`, `actix_rt::spawn`) + `GET /api/v1/transfer/ws`
+- [x] `run_ws_session` + `dispatch_ws_frame` in `quic/connection.rs` (inline HELLO handshake for WS path)
+- [ ] QUIC loopback integration tests (full upload/download round-trip via `ChannelTransport`)
 - [x] JTP/1 session unit tests via `ChannelTransport` (handshake: valid token, version mismatch, invalid JWT, peer closed)
 
 ---

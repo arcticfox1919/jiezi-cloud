@@ -22,6 +22,7 @@ pub mod quic;
 pub mod repository;
 pub mod routes;
 pub mod state;
+pub mod ws;
 
 use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
@@ -179,5 +180,10 @@ pub async fn build_app_state(
         download,
         settings: settings_repo,
         setup_completed: Arc::new(AtomicBool::new(setup_completed)),
+        quic_port: cfg.quic.enabled.then_some(cfg.quic.port),
+        tunnel_enabled: cfg.tunnel.enabled,
+        large_file_threshold: cfg.storage.large_file_threshold_bytes,
+        web_upload_limit_no_tunnel: cfg.storage.web_upload_max_bytes_no_tunnel,
+        web_upload_limit_with_tunnel: cfg.storage.web_upload_max_bytes_with_tunnel,
     }
 }

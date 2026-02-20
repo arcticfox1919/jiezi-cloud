@@ -386,3 +386,241 @@ async fn finalize_upload(
 #[cfg(test)]
 #[path = "connection_tests.rs"]
 mod tests;
+
+// ─── WebSocket session entry point ────────────────────────────────────────────
+
+/// Run a complete JTP/1 session over a WebSocket transport (no QUIC involved).
+///
+/// Unlike the QUIC path, a WebSocket connection is a single ordered channel so
+/// all frames — handshake, upload/download control, and chunk data — travel
+/// over the same connection in strict sequence.
+///
+/// This function is called from `crate::ws::ws_transfer` after the HTTP →
+/// WebSocket upgrade has been completed.  It is intentionally separate from
+/// [`handle_jtp_session`] to avoid contaminating the generic QUIC path with
+/// WebSocket-specific behaviour.
+pub async fn run_ws_session(
+    transport: &mut crate::ws::WsTransport,
+    state: &AppState,
+) -> Result<()> {
+    // ── Handshake ─────────────────────────────────────────────────────────────
+    let hello_frame = transport
+        .recv()
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("peer closed before HELLO"))?;
+
+    let hello = match hello_frame {
+        Frame::Hello(h) => h,
+        _ => anyhow::bail!("expected HELLO as first frame over WebSocket"),
+    };
+
+    if hello.version != JTP_VERSION {
+        let _ = transport.send(&Frame::Error(ErrorFrame {
+            session_id: Uuid::nil(),
+            code: ErrorCode::VersionMismatch,
+            message: format!(
+                "server requires JTP/{JTP_VERSION}, client offered JTP/{}",
+                hello.version
+            ),
+        })).await;
+        anyhow::bail!("JTP version mismatch");
+    }
+
+    let claims = state.jwt
+        .verify_access_token(&hello.token)
+        .map_err(|e| anyhow::anyhow!("JWT verification failed: {e}"))?;
+    info!(sub = %claims.sub, "WS: client authenticated");
+
+    transport.send(&Frame::HelloAck(HelloAckFrame {
+        server_version: JTP_VERSION,
+    })).await?;
+
+    let parallel_streams: u8 = 1;
+    let session_mgr = Arc::new(SessionManager::new());
+
+    loop {
+        let frame = match transport.recv().await {
+            Ok(Some(f)) => f,
+            Ok(None) => {
+                debug!("WS control stream closed by peer");
+                break;
+            }
+            Err(e) => {
+                warn!("WS stream read error: {e}");
+                break;
+            }
+        };
+
+        if let Err(e) =
+            dispatch_ws_frame(frame, transport, &session_mgr, state, parallel_streams).await
+        {
+            warn!("WS dispatch error: {e}; closing session");
+            let _ = transport.send(&Frame::Error(ErrorFrame {
+                session_id: uuid::Uuid::nil(),
+                code: jiezi_cloud_core::protocol::frames::ErrorCode::Internal,
+                message: e.to_string(),
+            })).await;
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Control-frame dispatcher for the WebSocket path.
+///
+/// Similar to [`dispatch_control_frame`] but handles chunk data inline (no
+/// independent QUIC streams) and sends download chunks inline rather than
+/// via a spawned task.
+async fn dispatch_ws_frame(
+    frame: Frame,
+    transport: &mut crate::ws::WsTransport,
+    session_mgr: &Arc<SessionManager>,
+    state: &AppState,
+    parallel_streams: u8,
+) -> Result<()> {
+    match frame {
+        // ── Upload request ────────────────────────────────────────────────────
+        Frame::UploadRequest(req) => {
+            let session_id  = req.session_id;
+            let chunk_count = req.chunk_count;
+            let all_chunks: Vec<u32> = (0..chunk_count).collect();
+
+            match session_mgr.insert_upload(
+                session_id,
+                req.file_name,
+                req.total_size,
+                req.content_hash,
+                chunk_count,
+            ) {
+                Ok(()) | Err(ErrorCode::AlreadyExists) => {}
+                Err(e) => return Err(anyhow::anyhow!("insert_upload failed: {:?}", e)),
+            }
+
+            transport.send(&Frame::UploadAccept(UploadAcceptFrame {
+                session_id,
+                missing_chunks: all_chunks,
+                parallel_streams,
+                window_size: 16,
+            })).await?;
+        }
+
+        // ── Chunk data (WebSocket: inline, no dedicated stream) ───────────────
+        Frame::ChunkData(chunk) => {
+            let session_id  = chunk.session_id;
+            let chunk_index = chunk.chunk_index;
+
+            // Record the chunk bytes.
+            let all_done = match session_mgr.store_chunk(session_id, chunk_index, chunk.data) {
+                Ok(done) => done,
+                Err(e) => {
+                    transport.send(&Frame::ChunkAck(jiezi_cloud_core::protocol::frames::ChunkAckFrame {
+                        session_id,
+                        chunk_index,
+                        ok: false,
+                    })).await?;
+                    return Err(anyhow::anyhow!("store_chunk failed: {:?}", e));
+                }
+            };
+
+            transport.send(&Frame::ChunkAck(jiezi_cloud_core::protocol::frames::ChunkAckFrame {
+                session_id,
+                chunk_index,
+                ok: true,
+            })).await?;
+
+            // If all chunks received, finalise the upload.
+            if all_done {
+                if let Some((file_name, assembled, _hash)) = session_mgr.take_assembled(session_id) {
+                    let file_id = FileId::new();
+                    match state.upload.store_file(&file_id, assembled, &ReplicationPolicy::default()).await {
+                        Ok(_) => {
+                            let file_node_id = file_id.into_inner();
+                            session_mgr.mark_completed(session_id, file_node_id);
+                            info!(
+                                session_id = %session_id,
+                                file_id    = %file_node_id,
+                                file_name  = %file_name,
+                                "WS: upload complete"
+                            );
+                            transport.send(&Frame::Complete(CompleteFrame {
+                                session_id,
+                                file_node_id,
+                            })).await?;
+                        }
+                        Err(e) => {
+                            session_mgr.mark_cancelled(session_id, e.to_string());
+                            transport.send(&Frame::Error(ErrorFrame {
+                                session_id,
+                                code: ErrorCode::Internal,
+                                message: e.to_string(),
+                            })).await?;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Download request ──────────────────────────────────────────────────
+        Frame::DownloadRequest(req) => {
+            let session_id   = req.session_id;
+            let file_node_id = req.file_node_id;
+            let file_id      = FileId::from(file_node_id);
+
+            let file_bytes = state.download.read_file(&file_id).await
+                .map_err(|e| anyhow::anyhow!("read_file({file_node_id}): {e}"))?;
+
+            let total_size  = file_bytes.len() as u64;
+            let max_chunk   = DEFAULT_MAX_CHUNK_BYTES;
+            let chunk_count = ((file_bytes.len() + max_chunk - 1) / max_chunk.max(1)) as u32;
+
+            session_mgr.insert_download(session_id, file_node_id, total_size, chunk_count)
+                .map_err(|e| anyhow::anyhow!("insert_download failed: {:?}", e))?;
+
+            transport.send(&Frame::DownloadInfo(DownloadInfoFrame {
+                session_id,
+                total_size,
+                chunk_count,
+                mime_type: "application/octet-stream".into(),
+                parallel_streams,
+            })).await?;
+
+            // Send all chunks inline (no QUIC streams available).
+            for (index, chunk) in file_bytes.chunks(max_chunk).enumerate() {
+                let byte_offset = (index * max_chunk) as u64;
+                transport.send(&Frame::ChunkData(jiezi_cloud_core::protocol::frames::ChunkDataFrame {
+                    session_id,
+                    chunk_index: index as u32,
+                    byte_offset,
+                    data: bytes::Bytes::copy_from_slice(chunk),
+                })).await?;
+            }
+
+            transport.send(&Frame::DownloadComplete(
+                jiezi_cloud_core::protocol::frames::DownloadCompleteFrame { session_id }
+            )).await?;
+        }
+
+        // ── Complete ACK ──────────────────────────────────────────────────────
+        Frame::CompleteAck(ack) => {
+            debug!(session_id = %ack.session_id, "WS: COMPLETE_ACK received");
+        }
+
+        // ── Cancel ────────────────────────────────────────────────────────────
+        Frame::Cancel(c) => {
+            info!(session_id = %c.session_id, reason = %c.reason, "WS: session cancelled");
+            session_mgr.mark_cancelled(c.session_id, c.reason);
+        }
+
+        // ── Keepalive ─────────────────────────────────────────────────────────
+        Frame::Ping(p) => {
+            transport.send(&Frame::Pong(PingFrame { nonce: p.nonce })).await?;
+        }
+
+        unexpected => {
+            warn!("WS: unexpected control frame: type 0x{:02X}", unexpected.type_byte());
+        }
+    }
+
+    Ok(())
+}

@@ -66,6 +66,8 @@ actix-rt       = "2"
 actix-cors     = "0.7"
 # Per-IP rate limiting based on the `governor` token-bucket algorithm.
 actix-governor = "0.8"
+# WebSocket support for Actix-web 4 (JTP/1 WebSocket fallback transport).
+actix-ws       = "0.3"
 
 # ── Database (ORM — DB driver selected via crate-level feature flags) ─────────
 # Workspace provides the version + shared features; each crate adds its own

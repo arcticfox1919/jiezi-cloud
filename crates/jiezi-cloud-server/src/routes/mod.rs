@@ -25,6 +25,9 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             // Admin operations (Owner / Admin role required per-handler).
             .service(web::scope("/admin").configure(admin::configure))
             // GET /api/v1/events  — SSE real-time push stream
-            .route("/events", web::get().to(sse::events)),
+            .route("/events", web::get().to(sse::events))
+            // WebSocket JTP/1 fallback transport (for environments where QUIC/UDP is blocked).
+            // GET /api/v1/transfer/ws  — HTTP Upgrade → WebSocket
+            .route("/transfer/ws", web::get().to(crate::ws::ws_transfer)),
     );
 }

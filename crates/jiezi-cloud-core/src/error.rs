@@ -54,6 +54,31 @@ pub enum AppError {
     /// An unexpected internal error (HTTP 500).
     #[error("internal error: {0}")]
     Internal(String),
+
+    /// The payload exceeds the maximum size allowed for the current client
+    /// type or access mode (HTTP 413).
+    ///
+    /// `max_bytes` is the applicable limit so that callers can surface it to
+    /// the end user without re-querying the configuration.
+    #[error("payload too large: maximum allowed is {max_bytes} bytes")]
+    PayloadTooLarge {
+        /// The effective upload limit in bytes for the caller's context.
+        max_bytes: u64,
+    },
+
+    /// The requested operation must be performed over a QUIC connection (HTTP
+    /// 426 Upgrade Required).
+    ///
+    /// Returned to *native* clients when they attempt an HTTP upload or
+    /// download for a file that exceeds `storage.large_file_threshold_bytes`.
+    /// The client should reconnect to the QUIC port and use JTP/1.
+    #[error("QUIC connection required for files above {threshold_bytes} bytes")]
+    QuicRequired {
+        /// The size threshold that triggered this response.
+        threshold_bytes: u64,
+        /// The UDP port the QUIC server is listening on.
+        quic_port: u16,
+    },
 }
 
 /// Convenience type alias used throughout the codebase.

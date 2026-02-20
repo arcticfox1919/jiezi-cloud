@@ -955,11 +955,15 @@ mod tests {
         let user_repo  = UserRepository::new(db.clone());
         let token_repo = RefreshTokenRepository::new(db);
 
+        let jwt = Arc::new(
+            JwtManager::generate(Duration::from_secs(900), Duration::from_secs(30 * 24 * 60 * 60))
+                .expect("JwtManager::generate"),
+        );
+
         AuthServiceImpl::new(
             user_repo,
             token_repo,
-            "test-secret-at-least-32-bytes-long!!",
-            Duration::from_secs(900),
+            jwt,
             Duration::from_secs(30 * 24 * 60 * 60),
         )
     }

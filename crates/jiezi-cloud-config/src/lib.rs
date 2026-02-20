@@ -64,6 +64,8 @@ pub struct AppConfig {
     pub email:    EmailConfig,
     #[serde(default)]
     pub quic:     QuicConfig,
+    #[serde(default)]
+    pub tunnel:   TunnelConfig,
 }
 
 // ---- Environment ------------------------------------------------------------
@@ -199,15 +201,36 @@ pub struct StorageConfig {
     /// Maximum allowed upload size in bytes (default: 10 GiB).
     pub max_upload_bytes: u64,
 
-    /// Files strictly below this size (bytes) are sent via HTTP/2.
-    /// Files at or above this threshold are sent via QUIC for lower latency.
+    /// Files strictly below this size (bytes) are sent via HTTP.
+    /// Native clients MUST use QUIC for files at or above this threshold.
     /// Default: 20 MiB (20 * 1024 * 1024 = 20_971_520).
     #[serde(default = "default_large_file_threshold")]
     pub large_file_threshold_bytes: u64,
+
+    /// Maximum HTTP upload bytes accepted from **web** clients when the
+    /// tunnel relay is **disabled** (pure LAN access).  Browser uploads
+    /// above this limit receive `413` with error code `FILE_TOO_LARGE_FOR_WEB`.
+    /// Default: 500 MiB.
+    #[serde(default = "default_web_upload_no_tunnel")]
+    pub web_upload_max_bytes_no_tunnel: u64,
+
+    /// Maximum HTTP upload bytes accepted from **web** clients when the
+    /// tunnel relay is **enabled**.  Relay traffic consumes upstream bandwidth,
+    /// so a more conservative limit is used.  Default: 100 MiB.
+    #[serde(default = "default_web_upload_with_tunnel")]
+    pub web_upload_max_bytes_with_tunnel: u64,
 }
 
 fn default_large_file_threshold() -> u64 {
     20 * 1024 * 1024 // 20 MiB
+}
+
+fn default_web_upload_no_tunnel() -> u64 {
+    500 * 1024 * 1024 // 500 MiB
+}
+
+fn default_web_upload_with_tunnel() -> u64 {
+    100 * 1024 * 1024 // 100 MiB
 }
 
 // ---- QUIC transfer server --------------------------------------------------
@@ -276,6 +299,21 @@ fn default_generate()          -> String { "GENERATE".to_owned() }
 fn default_quic_max_streams()  -> u32    { 128 }
 fn default_quic_idle_timeout() -> u64    { 30 }
 fn default_quic_max_chunk_bytes() -> u32 { 4 * 1024 * 1024 } // 4 MiB
+
+// ---- Tunnel ----------------------------------------------------------------
+
+/// Configuration for the optional jiezi-cloud-tunnel relay service.
+///
+/// When the tunnel is enabled, web-client uploads are subject to a tighter
+/// byte limit (`storage.web_upload_max_bytes_with_tunnel`) to avoid saturating
+/// relay bandwidth.  Native clients are unaffected and always use QUIC for
+/// large files.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TunnelConfig {
+    /// Whether the tunnel relay is enabled.  Affects web upload/download limits.
+    #[serde(default)]
+    pub enabled: bool,
+}
 
 // ---- Tracing ----------------------------------------------------------------
 

@@ -3,12 +3,16 @@
 //! Uses [`ChannelTransport`] (in-memory mpsc channel) so no real QUIC or
 //! network setup is needed.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use jiezi_cloud_auth::JwtManager;
-use jiezi_cloud_core::protocol::{
-    ChannelTransport, Frame,
-    frames::{ErrorCode, HelloFrame, JTP_VERSION},
+use jiezi_cloud_core::{
+    models::user::Role,
+    protocol::{
+        ChannelTransport, Frame, JtpTransport,
+        frames::{ErrorCode, HelloFrame, JTP_VERSION},
+    },
+    types::UserId,
 };
 
 use super::perform_handshake;
@@ -17,12 +21,19 @@ use super::perform_handshake;
 
 /// Build a minimal [`JwtManager`] backed by a freshly-generated ES256 key pair.
 fn test_jwt() -> Arc<JwtManager> {
-    Arc::new(JwtManager::new_random().expect("JwtManager::new_random"))
+    Arc::new(
+        JwtManager::generate(Duration::from_secs(900), Duration::from_secs(86400))
+            .expect("JwtManager::generate"),
+    )
 }
 
 /// Issue a valid access token for a fixed subject.
 fn valid_token(jwt: &JwtManager) -> String {
-    jwt.issue_access_token("test-user").expect("issue_access_token")
+    let user_id = UserId::new();
+    let (token, _) = jwt
+        .generate_access_token(&user_id, Role::Member)
+        .expect("generate_access_token");
+    token
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -51,7 +62,7 @@ async fn handshake_valid_token() {
     // Server must have replied HELLO_ACK.
     let reply = client.recv_frame().await.unwrap().expect("expected HELLO_ACK");
     assert!(
-        matches!(reply, Frame::HelloAck(ack) if ack.server_version == JTP_VERSION),
+        matches!(&reply, Frame::HelloAck(ack) if ack.server_version == JTP_VERSION),
         "expected HelloAck, got {reply:?}"
     );
 }
@@ -78,7 +89,7 @@ async fn handshake_version_mismatch() {
     // Client should have received an ERROR frame.
     let err_frame = client.recv_frame().await.unwrap().expect("expected ERROR frame");
     assert!(
-        matches!(err_frame, Frame::Error(e) if e.code == ErrorCode::VersionMismatch),
+        matches!(&err_frame, Frame::Error(e) if e.code == ErrorCode::VersionMismatch),
         "expected VersionMismatch error, got {err_frame:?}"
     );
 }

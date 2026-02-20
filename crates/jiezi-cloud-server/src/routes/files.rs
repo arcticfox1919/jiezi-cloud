@@ -250,9 +250,18 @@ async fn list_trash(
 ///
 /// Accepts the raw file bytes in the request body.  The pipeline:
 /// 1. Receives raw bytes (Actix request body limit applies).
-/// 2. Runs FastCDC chunking.
-/// 3. Writes chunks to all configured storage backends (dedup-aware).
-/// 4. Creates a `FileNode` record in the VFS under `parent_id`.
+/// 2. Routes based on client type and file size:
+///    - Native client, size >= `large_file_threshold` → `426 Upgrade Required` (use QUIC).
+///    - Web client, size > web limit → `413 Payload Too Large` (install native client).
+/// 3. Runs FastCDC chunking.
+/// 4. Writes chunks to all configured storage backends (dedup-aware).
+/// 5. Creates a `FileNode` record in the VFS under `parent_id`.
+///
+/// ### Client identification
+///
+/// Set the `X-Jiezi-Client: native` request header to identify as the native
+/// desktop / mobile client.  Absence of this header (or any other value) is
+/// treated as a web-browser client.
 ///
 /// Returns the new [`FileNode`] as JSON with `201 Created`.
 async fn upload_file(
@@ -260,9 +269,36 @@ async fn upload_file(
     auth:  AuthUser,
     query: web::Query<UploadQuery>,
     body:  Bytes,
+    req:   HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let parent_id = parse_file_id(&query.parent_id)?;
     let owner_id  = parse_user_id(&auth.0.sub)?;
+
+    let is_native = is_native_client(&req);
+    let size      = body.len() as u64;
+
+    // Route based on client type and payload size.
+    if is_native {
+        // Native clients must use the QUIC transfer server for large files.
+        if size >= state.large_file_threshold {
+            let quic_port = state.quic_port.unwrap_or(4433);
+            return Err(AppError::QuicRequired {
+                threshold_bytes: state.large_file_threshold,
+                quic_port,
+            }
+            .into());
+        }
+    } else {
+        // Web clients are subject to a per-tunnel-mode upload limit.
+        let limit = if state.tunnel_enabled {
+            state.web_upload_limit_with_tunnel
+        } else {
+            state.web_upload_limit_no_tunnel
+        };
+        if size > limit {
+            return Err(AppError::PayloadTooLarge { max_bytes: limit }.into());
+        }
+    }
 
     // Assign a new VFS file ID upfront so the upload service can record it.
     let file_id = jiezi_cloud_core::types::FileId::new();
@@ -286,8 +322,8 @@ async fn upload_file(
         )
         .await
         .map_err(|e| {
-            // If the VFS record fails, the orphaned chunk records will be
-            // cleaned up by the future garbage-collecto run.
+            // If the VFS record fails, orphaned chunk records will be cleaned
+            // up by the future garbage-collector run.
             e
         })?;
 
@@ -298,13 +334,46 @@ async fn upload_file(
 ///
 /// Supports the `Range` header for partial content delivery (HTTP 206).
 /// Full files are returned with `200 OK`.
+///
+/// ### Routing before I/O
+///
+/// The total file size is resolved from the VFS metadata first.  If the
+/// resolved size exceeds the applicable per-client/per-mode limit, a
+/// structured error is returned before any bytes are read from storage:
+/// - Native client, size >= `large_file_threshold` → `426` (use QUIC).
+/// - Web client, size > web limit → `413` (install native client).
 async fn download_file(
     state:   web::Data<AppState>,
     _auth:   AuthUser,
     path:    web::Path<String>,
     req:     HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    let file_id = parse_file_id(&path.into_inner())?;
+    let file_id   = parse_file_id(&path.into_inner())?;
+    let is_native = is_native_client(&req);
+
+    // Resolve file size from VFS metadata for routing decisions.
+    let node = state.vfs.get_node(&file_id).await?;
+    let size = node.size;
+
+    if is_native {
+        if size >= state.large_file_threshold {
+            let quic_port = state.quic_port.unwrap_or(4433);
+            return Err(AppError::QuicRequired {
+                threshold_bytes: state.large_file_threshold,
+                quic_port,
+            }
+            .into());
+        }
+    } else {
+        let limit = if state.tunnel_enabled {
+            state.web_upload_limit_with_tunnel
+        } else {
+            state.web_upload_limit_no_tunnel
+        };
+        if size > limit {
+            return Err(AppError::PayloadTooLarge { max_bytes: limit }.into());
+        }
+    }
 
     // Parse optional Range header: "bytes=start-end"
     if let Some(range_header) = req.headers().get("Range") {
@@ -332,6 +401,21 @@ async fn download_file(
     Ok(HttpResponse::Ok()
         .content_type("application/octet-stream")
         .body(data))
+}
+
+// ─── Client-type detection ────────────────────────────────────────────────────
+
+/// Returns `true` when the `X-Jiezi-Client: native` header is present.
+///
+/// Native clients (desktop / mobile app) set this header on every request.
+/// Its absence — or any value other than `"native"` — is treated as a
+/// web-browser client.
+fn is_native_client(req: &HttpRequest) -> bool {
+    req.headers()
+        .get("X-Jiezi-Client")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("native"))
+        .unwrap_or(false)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
