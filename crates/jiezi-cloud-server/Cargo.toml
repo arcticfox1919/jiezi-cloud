@@ -21,9 +21,9 @@ path = "src/lib.rs"
 #   MySQL      (prod): cargo build --no-default-features --features db-mysql
 [features]
 default     = ["db-sqlite"]
-db-sqlite   = ["jiezi-cloud-auth/db-sqlite",   "jiezi-cloud-vfs/db-sqlite",   "jiezi-cloud-migration/db-sqlite"]
-db-postgres = ["jiezi-cloud-auth/db-postgres", "jiezi-cloud-vfs/db-postgres", "jiezi-cloud-migration/db-postgres"]
-db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-vfs/db-mysql",    "jiezi-cloud-migration/db-mysql"]
+db-sqlite   = ["jiezi-cloud-auth/db-sqlite",   "jiezi-cloud-vfs/db-sqlite",   "jiezi-cloud-storage/db-sqlite",   "jiezi-cloud-migration/db-sqlite"]
+db-postgres = ["jiezi-cloud-auth/db-postgres", "jiezi-cloud-vfs/db-postgres", "jiezi-cloud-storage/db-postgres", "jiezi-cloud-migration/db-postgres"]
+db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-vfs/db-mysql",    "jiezi-cloud-storage/db-mysql",    "jiezi-cloud-migration/db-mysql"]
 
 [dependencies]
 jiezi-cloud-core.workspace      = true
@@ -54,6 +54,7 @@ tokio.workspace                 = true
 tokio-stream.workspace          = true
 tracing.workspace               = true
 tracing-subscriber.workspace    = true
+bytes.workspace                 = true
 chrono.workspace                = true
 anyhow.workspace                = true
 

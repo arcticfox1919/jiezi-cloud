@@ -1,7 +1,11 @@
 //! File system API handlers.
 //!
-//! All routes are mounted under `/api/v1/files` by [`super::configure`].
+//! All VFS metadata routes are mounted under `/api/v1/files`.
+//! Upload and download routes are mounted under `/api/v1/upload` and
+//! `/api/v1/download` by [`super::configure`].
 //! Auth is required for every endpoint (via the [`AuthUser`] extractor).
+//!
+//! ## VFS metadata routes (under `/api/v1/files`)
 //!
 //! | Method   | Path                      | Description                              |
 //! |----------|---------------------------|------------------------------------------|
@@ -15,13 +19,27 @@
 //! | POST     | `/{id}/restore`           | Restore from trash                       |
 //! | DELETE   | `/{id}/permanent`         | Permanently delete a node                |
 //! | GET      | `/trash`                  | List the current user's trash            |
+//!
+//! ## Upload routes (under `/api/v1/upload`)
+//!
+//! | Method   | Path                      | Description                              |
+//! |----------|---------------------------|------------------------------------------|
+//! | POST     | `/`                       | Upload a file (raw body, max 10 GiB)     |
+//!
+//! ## Download routes (under `/api/v1/download`)
+//!
+//! | Method   | Path                      | Description                              |
+//! |----------|---------------------------|------------------------------------------|
+//! | GET      | `/{id}`                   | Download file content (supports Range)   |
 
 use std::str::FromStr;
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
+use bytes::Bytes;
 use serde::Deserialize;
 
 use jiezi_cloud_core::error::AppError;
+use jiezi_cloud_core::models::backend::ReplicationPolicy;
 use jiezi_cloud_core::types::{FileId, PageRequest, UserId};
 
 use crate::error::ApiError;
@@ -30,6 +48,7 @@ use crate::state::AppState;
 
 // ─── Route registration ───────────────────────────────────────────────────────
 
+/// Register VFS metadata routes under `/api/v1/files`.
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg
         // Static routes must come before parameterised routes.
@@ -43,6 +62,16 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/{id}",                web::delete().to(soft_delete))
         .route("/{id}/restore",        web::post().to(restore))
         .route("/{id}/permanent",      web::delete().to(permanent_delete));
+}
+
+/// Register upload routes under `/api/v1/upload`.
+pub fn configure_upload(cfg: &mut web::ServiceConfig) {
+    cfg.route("/", web::post().to(upload_file));
+}
+
+/// Register download routes under `/api/v1/download`.
+pub fn configure_download(cfg: &mut web::ServiceConfig) {
+    cfg.route("/{id}", web::get().to(download_file));
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -75,7 +104,18 @@ struct CopyBody {
     new_parent_id: String,
 }
 
-// ─── Handlers ─────────────────────────────────────────────────────────────────
+/// Query parameters for `POST /api/v1/upload/`.
+#[derive(Deserialize)]
+struct UploadQuery {
+    /// ID of the parent directory in the VFS.
+    parent_id: String,
+    /// Filename to store.
+    name: String,
+    /// Optional MIME type hint from the client.
+    mime_type: Option<String>,
+}
+
+// ─── VFS metadata handlers ────────────────────────────────────────────────────
 
 /// `GET /files/{id}` — fetch a single node.
 async fn get_node(
@@ -202,6 +242,96 @@ async fn list_trash(
     let owner_id = parse_user_id(&auth.0.sub)?;
     let nodes = state.vfs.list_trash(&owner_id).await?;
     Ok(HttpResponse::Ok().json(nodes))
+}
+
+// ─── Upload / download handlers ───────────────────────────────────────────────
+
+/// `POST /upload/?parent_id=…&name=…` — upload a file.
+///
+/// Accepts the raw file bytes in the request body.  The pipeline:
+/// 1. Receives raw bytes (Actix request body limit applies).
+/// 2. Runs FastCDC chunking.
+/// 3. Writes chunks to all configured storage backends (dedup-aware).
+/// 4. Creates a `FileNode` record in the VFS under `parent_id`.
+///
+/// Returns the new [`FileNode`] as JSON with `201 Created`.
+async fn upload_file(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+    query: web::Query<UploadQuery>,
+    body:  Bytes,
+) -> Result<HttpResponse, ApiError> {
+    let parent_id = parse_file_id(&query.parent_id)?;
+    let owner_id  = parse_user_id(&auth.0.sub)?;
+
+    // Assign a new VFS file ID upfront so the upload service can record it.
+    let file_id = jiezi_cloud_core::types::FileId::new();
+
+    // Store bytes → backends, persist chunk records.
+    let stored = state
+        .upload
+        .store_file(&file_id, body, &ReplicationPolicy::default())
+        .await?;
+
+    // Create the VFS metadata node.
+    let node = state
+        .vfs
+        .create_file_record(
+            &parent_id,
+            &query.name,
+            stored.total_size,
+            Some(stored.content_hash),
+            query.mime_type.clone(),
+            &owner_id,
+        )
+        .await
+        .map_err(|e| {
+            // If the VFS record fails, the orphaned chunk records will be
+            // cleaned up by the future garbage-collecto run.
+            e
+        })?;
+
+    Ok(HttpResponse::Created().json(node))
+}
+
+/// `GET /download/{id}` — download file content.
+///
+/// Supports the `Range` header for partial content delivery (HTTP 206).
+/// Full files are returned with `200 OK`.
+async fn download_file(
+    state:   web::Data<AppState>,
+    _auth:   AuthUser,
+    path:    web::Path<String>,
+    req:     HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    let file_id = parse_file_id(&path.into_inner())?;
+
+    // Parse optional Range header: "bytes=start-end"
+    if let Some(range_header) = req.headers().get("Range") {
+        if let Ok(range_str) = range_header.to_str() {
+            if let Some(bytes_range) = range_str.strip_prefix("bytes=") {
+                let parts: Vec<&str> = bytes_range.splitn(2, '-').collect();
+                if parts.len() == 2 {
+                    let start: Option<u64> = parts[0].parse().ok();
+                    let end:   Option<u64> = parts[1].parse().ok();
+
+                    if let (Some(start), Some(end)) = (start, end) {
+                        let data = state.download.read_range(&file_id, start, end + 1).await?;
+                        return Ok(HttpResponse::PartialContent()
+                            .insert_header(("Content-Range", format!("bytes {start}-{end}/*")))
+                            .content_type("application/octet-stream")
+                            .body(data));
+                    }
+                }
+            }
+        }
+    }
+
+    // Full file download.
+    let data = state.download.read_file(&file_id).await?;
+    Ok(HttpResponse::Ok()
+        .content_type("application/octet-stream")
+        .body(data))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

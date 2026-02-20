@@ -47,6 +47,7 @@ use tracing::{debug, warn};
 
 use jiezi_cloud_core::{
     error::{AppError, AppResult},
+    models::backend::ReplicationPolicy,
     traits::storage::StorageBackend,
     types::{BackendId, HealthStatus},
 };
@@ -292,17 +293,55 @@ impl StorageManager {
         }))
     }
 
-    // ── TODO: ReplicationPolicy execution ──────────────────────────────────────
-    //
-    // TODO(put-with-policy): add `pub async fn put_with_policy(&self, key: &str,
-    //   data: Bytes, policy: &ReplicationPolicy) -> Vec<(BackendId, AppResult<()>)>`
-    // that selects target backends according to the policy:
-    //   - ReplicationPolicy::All      → delegates to `put_to_all`
-    //   - ReplicationPolicy::MinN{n}  → selects first N enabled backends by priority
-    //   - ReplicationPolicy::Specific → delegates to `put_to`
-    // This is the entry point the upload service should call.
-    //
-    // Note: `ReplicationPolicy` is defined in `jiezi_cloud_core::models::backend`.
+    // ── ReplicationPolicy execution ───────────────────────────────────────────
+
+    /// Write `data` under `key` to backends selected by `policy`.
+    ///
+    /// | Policy                    | Behaviour                                          |
+    /// |---------------------------|----------------------------------------------------|
+    /// | [`ReplicationPolicy::All`]      | Same as [`put_to_all`]                    |
+    /// | [`ReplicationPolicy::MinN`]     | First `n` backends by priority order      |
+    /// | [`ReplicationPolicy::Specific`] | Same as [`put_to`] with the listed IDs    |
+    ///
+    /// Returns one result per selected backend.  Backends not targeted by the
+    /// policy are not written to and do not appear in the result set.
+    ///
+    /// If a `MinN` policy requests more backends than are registered, the write
+    /// proceeds with however many are available (and a warning is logged).
+    ///
+    /// [`put_to_all`]: StorageManager::put_to_all
+    /// [`put_to`]: StorageManager::put_to
+    pub async fn put_with_policy(
+        &self,
+        key: &str,
+        data: Bytes,
+        policy: &ReplicationPolicy,
+    ) -> Vec<(BackendId, AppResult<()>)> {
+        match policy {
+            ReplicationPolicy::All => self.put_to_all(key, data).await,
+
+            ReplicationPolicy::MinN { n } => {
+                let ids: Vec<BackendId> = {
+                    let backends = self.backends.read().await;
+                    let available = backends.len();
+                    if *n > available {
+                        warn!(
+                            requested = n,
+                            available,
+                            "MinN replication policy requested more backends than available; \
+                             writing to all {available} backends"
+                        );
+                    }
+                    backends.iter().take(*n).map(|b| b.backend_id().clone()).collect()
+                };
+                self.put_to(key, data, &ids).await
+            }
+
+            ReplicationPolicy::Specific { backend_ids } => {
+                self.put_to(key, data, backend_ids).await
+            }
+        }
+    }
 
     // ── Health checks ─────────────────────────────────────────────────────────
 

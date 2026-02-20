@@ -2,16 +2,25 @@
 name    = "jiezi-cloud-storage"
 version = "0.1.0"
 edition = "2024"
-description = "Storage backends (local filesystem, S3-compatible, WebDAV) and CDC chunking"
+description = "Storage backends (local filesystem, S3-compatible, WebDAV), CDC chunking, and upload/download pipeline"
+
+# ─── Database backend feature flags ──────────────────────────────────────────
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm/sqlx-sqlite",   "sea-orm/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm/sqlx-postgres", "sea-orm/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm/sqlx-mysql",    "sea-orm/runtime-tokio-native-tls"]
 
 [dependencies]
 jiezi-cloud-core.workspace = true
 async-trait.workspace      = true
 bytes.workspace            = true
+chrono.workspace           = true
 fastcdc.workspace          = true
 hex.workspace              = true
 object_store.workspace     = true
 reqwest_dav.workspace      = true
+sea-orm.workspace          = true
 sha2.workspace             = true
 serde.workspace            = true
 serde_json.workspace       = true

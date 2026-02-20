@@ -195,6 +195,16 @@ pub struct StorageConfig {
 
     /// Maximum allowed upload size in bytes (default: 10 GiB).
     pub max_upload_bytes: u64,
+
+    /// Files strictly below this size (bytes) are sent via HTTP/2.
+    /// Files at or above this threshold are sent via QUIC for lower latency.
+    /// Default: 20 MiB (20 * 1024 * 1024 = 20_971_520).
+    #[serde(default = "default_large_file_threshold")]
+    pub large_file_threshold_bytes: u64,
+}
+
+fn default_large_file_threshold() -> u64 {
+    20 * 1024 * 1024 // 20 MiB
 }
 
 // ---- Tracing ----------------------------------------------------------------

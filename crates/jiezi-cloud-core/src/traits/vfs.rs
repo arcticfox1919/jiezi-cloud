@@ -119,4 +119,24 @@ pub trait VfsService: Send + Sync {
         new_parent: &FileId,
         owner: &UserId,
     ) -> AppResult<FileNode>;
+
+    /// Create a file record in the VFS metadata tree.
+    ///
+    /// This is called by the **upload subsystem** once raw bytes have been
+    /// safely persisted to storage backends.  Generic VFS clients (directory
+    /// browsing, rename, etc.) should not call this directly.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `parent_id` does not exist.
+    /// - [`AppError::Conflict`] if a child named `name` already exists.
+    async fn create_file_record(
+        &self,
+        parent_id: &FileId,
+        name: &str,
+        size: u64,
+        content_hash: Option<String>,
+        mime_type: Option<String>,
+        owner: &UserId,
+    ) -> AppResult<FileNode>;
 }

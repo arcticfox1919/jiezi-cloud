@@ -45,6 +45,11 @@ dir              = "./data/backups/db"
 local_root        = "./data/files"
 max_upload_bytes  = 10737418240   # 10 GiB
 
+# Files >= this byte count are transferred via QUIC (lower latency for large files).
+# Files below this threshold use HTTP/2 multipart upload.
+# Default: 20 MiB = 20 * 1024 * 1024.
+large_file_threshold_bytes = 20971520
+
 # ── Tracing / logging ─────────────────────────────────────────────────────────
 [tracing]
 level  = "debug"

@@ -18,6 +18,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/setup").configure(setup::configure))
             .service(web::scope("/auth").configure(auth::configure))
             .service(web::scope("/files").configure(files::configure))
+            // Upload pipeline: POST /api/v1/upload/?parent_id=…&name=…
+            .service(web::scope("/upload").configure(files::configure_upload))
+            // Download pipeline: GET /api/v1/download/{id}
+            .service(web::scope("/download").configure(files::configure_download))
             // Admin operations (Owner / Admin role required per-handler).
             .service(web::scope("/admin").configure(admin::configure))
             // GET /api/v1/events  — SSE real-time push stream

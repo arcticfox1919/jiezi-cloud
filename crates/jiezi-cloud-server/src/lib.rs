@@ -33,6 +33,7 @@ use jiezi_cloud_auth::{
     AuthServiceImpl,
 };
 use jiezi_cloud_config::AppConfig;
+use jiezi_cloud_storage::{DownloadService, LocalFsBackend, StorageManager, UploadService};
 use jiezi_cloud_vfs::{repository::FileNodeRepository, VfsServiceImpl};
 
 use crate::repository::settings::SystemSettingsRepository;
@@ -127,12 +128,32 @@ pub async fn build_app_state(
 
     let vfs_service = Arc::new(VfsServiceImpl::new(FileNodeRepository::new(db.clone())));
 
+    // ── Storage / upload / download ───────────────────────────────────────────
+    //
+    // Bootstrap a single LocalFsBackend from the configured `local_root`.
+    // A full `BackendRepository` (reading from `storage_backend_configs`) is
+    // a TODO; for now the local backend is sufficient for single-node installs.
+    let storage = {
+        let backend = Arc::new(
+            LocalFsBackend::new("local", cfg.storage.local_root.clone()),
+        );
+        let mgr = StorageManager::with_backends(vec![
+            backend as Arc<dyn jiezi_cloud_core::traits::storage::StorageBackend>,
+        ]);
+        Arc::new(mgr)
+    };
+    let upload   = UploadService::new(storage.clone(), db.clone());
+    let download = DownloadService::new(storage.clone(), db.clone());
+
     let settings_repo = SystemSettingsRepository::new(db.clone());
 
     state::AppState {
         db,
         auth: auth_service,
         vfs: vfs_service,
+        storage,
+        upload,
+        download,
         settings: settings_repo,
         setup_completed: Arc::new(AtomicBool::new(setup_completed)),
     }

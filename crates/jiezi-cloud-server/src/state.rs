@@ -10,6 +10,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use sea_orm::DatabaseConnection;
 
 use jiezi_cloud_core::traits::{auth::AuthService, vfs::VfsService};
+use jiezi_cloud_storage::{DownloadService, StorageManager, UploadService};
 
 use crate::repository::settings::SystemSettingsRepository;
 
@@ -22,6 +23,12 @@ pub struct AppState {
     pub auth: Arc<dyn AuthService>,
     /// Virtual file system service.
     pub vfs: Arc<dyn VfsService>,
+    /// Multi-backend storage manager (reads + backend health).
+    pub storage: Arc<StorageManager>,
+    /// Upload pipeline: CDC → backends → DB chunk records.
+    pub upload: UploadService,
+    /// Download pipeline: DB chunk records → backends → byte stream.
+    pub download: DownloadService,
     /// Repository for the `system_settings` key-value table.
     ///
     /// Used by setup and admin-settings handlers to read/write server

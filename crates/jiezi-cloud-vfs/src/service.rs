@@ -45,24 +45,6 @@ impl VfsServiceImpl {
         self.repo.create_root(space_id, *owner).await
     }
 
-    /// Create a file record in the VFS (called after bytes are safely stored).
-    ///
-    /// Also outside the core trait since file-record creation is driven by the
-    /// upload subsystem, not generic VFS clients.
-    pub async fn create_file_record(
-        &self,
-        parent_id: &FileId,
-        name: &str,
-        size: u64,
-        content_hash: Option<String>,
-        mime_type: Option<String>,
-        owner: &UserId,
-    ) -> AppResult<FileNode> {
-        self.repo
-            .create_file(parent_id, name, size, content_hash, mime_type, *owner)
-            .await
-    }
-
     /// List soft-deleted nodes owned by `owner`.
     pub async fn list_trash(&self, owner: &UserId) -> AppResult<Vec<FileNode>> {
         self.repo.list_trash(owner).await
@@ -123,5 +105,19 @@ impl VfsService for VfsServiceImpl {
         owner: &UserId,
     ) -> AppResult<FileNode> {
         self.repo.copy_node(id, new_parent, *owner).await
+    }
+
+    async fn create_file_record(
+        &self,
+        parent_id: &FileId,
+        name: &str,
+        size: u64,
+        content_hash: Option<String>,
+        mime_type: Option<String>,
+        owner: &UserId,
+    ) -> AppResult<FileNode> {
+        self.repo
+            .create_file(parent_id, name, size, content_hash, mime_type, *owner)
+            .await
     }
 }
