@@ -43,6 +43,20 @@ pub struct Model {
     /// Running total of bytes consumed.
     pub storage_used: i64,
 
+    /// Consecutive failed login attempts since the last successful login.
+    pub failed_login_count: i32,
+
+    /// When set, the account is locked until this timestamp.
+    #[sea_orm(nullable)]
+    pub locked_until: Option<DateTimeUtc>,
+
+    /// Timestamp of the most recent failed login attempt.
+    #[sea_orm(nullable)]
+    pub last_failed_login_at: Option<DateTimeUtc>,
+
+    /// Whether the user has clicked the link in the verification email.
+    pub email_verified: bool,
+
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

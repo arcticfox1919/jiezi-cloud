@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use crate::error::AppResult;
 use crate::models::user::{
     AdminResetPasswordRequest, ChangeOwnPasswordRequest, ChangeRoleRequest,
-    Claims, LoginRequest, RegisterRequest, Role, SessionInfo, SetActiveRequest,
-    SetQuotaRequest, TokenPair, UpdateProfileRequest, User,
+    Claims, LoginRequest, RegisterRequest, ResetPasswordWithOtpRequest, Role,
+    SendOtpRequest, SessionInfo, SetActiveRequest, SetQuotaRequest, TokenPair,
+    UnlockWithOtpRequest, UpdateProfileRequest, User,
 };
 use crate::types::{Action, PageRequest, PageResponse, ResourceRef, UserId};
 
@@ -121,6 +122,17 @@ pub trait AuthService: Send + Sync {
         req:     ChangeOwnPasswordRequest,
     ) -> AppResult<()>;
 
+    /// Send a 6-digit password-change OTP to the caller's registered email.
+    ///
+    /// The caller must be authenticated.  The received code must then be
+    /// passed as [`ChangeOwnPasswordRequest::email_otp`].  No-op (returns
+    /// `Ok`) when the feature is disabled in config.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `user_id` does not exist.
+    async fn send_change_password_otp(&self, user_id: &UserId) -> AppResult<()>;
+
     // ─── Admin operations ─────────────────────────────────────────────────────
 
     /// Change the system-level role of a user.
@@ -219,6 +231,49 @@ pub trait AuthService: Send + Sync {
     /// - [`AppError::NotFound`] if `user_id` does not exist.
     /// - [`AppError::Validation`] if `new_password` is too short (< 8 chars).
     async fn change_password(&self, user_id: &UserId, new_password: &str) -> AppResult<()>;
+
+    // ─── Email OTP ───────────────────────────────────────────────────────────────
+
+    /// Send a 6-digit registration OTP to `req.email`.
+    ///
+    /// The OTP must be supplied in [`RegisterRequest::email_otp`] and will be
+    /// verified before the account is created.  No-op (returns `Ok`) when the
+    /// feature is disabled in config.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::TooManyRequests`] if too many codes have been sent recently.
+    async fn send_register_otp(&self, req: SendOtpRequest) -> AppResult<()>;
+
+    /// Send a 6-digit password-reset OTP to `req.email`.
+    ///
+    /// If no active account with that email exists, the call succeeds silently
+    /// (prevents email enumeration).
+    async fn send_reset_password_otp(&self, req: SendOtpRequest) -> AppResult<()>;
+
+    /// Verify the OTP and set a new password for the account.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::Gone`] if the OTP is invalid, expired, or already used.
+    /// - [`AppError::NotFound`] if no account matches `req.email`.\
+    /// - [`AppError::Validation`] if `req.new_password` is too short.
+    async fn reset_password_with_otp(&self, req: ResetPasswordWithOtpRequest) -> AppResult<()>;
+
+    /// Send a 6-digit unlock OTP to `req.email`.
+    ///
+    /// Only sends when the account is currently locked.  Returns `Ok` silently
+    /// if the account is not locked or does not exist (prevents enumeration).
+    async fn send_unlock_otp(&self, req: SendOtpRequest) -> AppResult<()>;
+
+    /// Verify the unlock OTP and clear the account lockout.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::Gone`] if the OTP is invalid, expired, or already used.
+    /// - [`AppError::NotFound`] if no account matches `req.email`.
+    async fn unlock_account_with_otp(&self, req: UnlockWithOtpRequest) -> AppResult<()>;
+
 
     /// Check whether a user is authorised to perform an action on a resource.
     ///

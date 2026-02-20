@@ -60,6 +60,8 @@ pub struct AppConfig {
     pub auth:     AuthConfig,
     pub storage:  StorageConfig,
     pub tracing:  TracingConfig,
+    pub security: SecurityConfig,
+    pub email:    EmailConfig,
 }
 
 // ---- Environment ------------------------------------------------------------
@@ -217,6 +219,78 @@ pub enum TracingFormat {
     Compact,
 }
 
+// ──── Security ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SecurityConfig {
+    // ── Login brute-force lockout ─────────────────────────────────────────────────────
+
+    /// Number of consecutive failed logins before the account is locked.
+    ///
+    /// Set to `0` to disable lockout entirely (not recommended).
+    pub max_login_attempts: u32,
+
+    /// How long (in seconds) to lock an account after exceeding
+    /// `max_login_attempts`.
+    pub lockout_duration_secs: u64,
+
+    // ── Rate limiting ────────────────────────────────────────────────────────────
+
+    /// Maximum number of auth-endpoint requests (login, register, refresh)
+    /// from a single IP address per minute.  Excess requests receive 429.
+    pub auth_rate_limit_per_minute: u32,
+
+    // ── CORS ───────────────────────────────────────────────────────────────────
+
+    /// Explicit list of origins allowed by the CORS policy
+    /// (e.g. `["http://localhost:5173", "https://cloud.myname.com"]`).
+    ///
+    /// If the list is **empty** the server allows any origin (`*`) — acceptable
+    /// for same-machine development but **must** be set in production.
+    pub cors_allowed_origins: Vec<String>,
+
+    // ── Argon2 DoS guard ──────────────────────────────────────────────────────────
+
+    /// Maximum allowed plaintext password length in bytes.
+    ///
+    /// Argon2 derives a 32-byte key from the password, but must hash all of
+    /// `n` bytes first.  An attacker submitting a multi-megabyte password can
+    /// cause a CPU spike.  Requests with passwords longer than this limit are
+    /// rejected before any crypto work is done.
+    ///
+    /// 128 bytes comfortably covers any human-chosen passphrase while blocking
+    /// trivial DoS payloads.
+    pub max_password_bytes: usize,
+}
+
+// ──── Email ────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailConfig {
+    /// Whether SMTP sending is active.  When `false` (dev default), verification
+    /// tokens are logged at `INFO` level instead of emailed.
+    pub enabled: bool,
+
+    /// SMTP server hostname.
+    pub smtp_host: String,
+    /// SMTP server port (587 for STARTTLS, 465 for implicit TLS).
+    pub smtp_port: u16,
+    pub smtp_username: String,
+    pub smtp_password: String,
+
+    /// RFC 5321 "From" address (e.g. `"no-reply@cloud.example.com"`).
+    pub from_address: String,
+    /// Human-readable sender name shown in email clients.
+    pub from_name: String,
+
+    /// If `true`, a user must verify their email OTP before the account is created.
+    pub verification_required: bool,
+
+    /// How long (seconds) an OTP remains valid before expiring.
+    /// Default: 600 (10 minutes).
+    pub otp_ttl_secs: u64,
+}
+
 // ---- Loader -----------------------------------------------------------------
 
 /// Load the application configuration using the layered strategy described in
@@ -300,6 +374,26 @@ impl AppConfig {
 
         if self.server.port == 0 {
             return Err("server.port must be a non-zero value".to_owned());
+        }
+
+        // Email verification config consistency checks.
+        // `verification_required = true` with `enabled = false` means users
+        // would register but never be able to log in — catch this at startup.
+        if self.email.verification_required && !self.email.enabled {
+            return Err(
+                "email.verification_required = true requires email.enabled = true; \
+                 otherwise registered users can never verify and will be locked out"
+                    .to_owned(),
+            );
+        }
+        // If SMTP sending is enabled, the essential fields must be non-empty.
+        if self.email.enabled {
+            if self.email.smtp_host.is_empty() {
+                return Err("email.smtp_host must not be empty when email.enabled = true".to_owned());
+            }
+            if self.email.from_address.is_empty() {
+                return Err("email.from_address must not be empty when email.enabled = true".to_owned());
+            }
         }
 
         Ok(())

@@ -29,6 +29,8 @@ pub mod m20260220_000006_create_storage_backend_configs;
 pub mod m20260220_000007_create_chunk_locations;
 pub mod m20260220_000008_create_file_chunks;
 pub mod m20260220_000009_create_system_settings;
+pub mod m20260220_000010_add_login_lockout;
+pub mod m20260220_000011_add_email_verification;
 
 use sea_orm_migration::prelude::*;
 
@@ -49,6 +51,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260220_000007_create_chunk_locations::Migration),
             Box::new(m20260220_000008_create_file_chunks::Migration),
             Box::new(m20260220_000009_create_system_settings::Migration),
+            Box::new(m20260220_000010_add_login_lockout::Migration),
+            Box::new(m20260220_000011_add_email_verification::Migration),
         ]
     }
 }

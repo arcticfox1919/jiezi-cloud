@@ -14,9 +14,13 @@
 //! 7. Wire service objects (Auth, VFS).
 //! 8. Bind and run Actix-web `HttpServer`.
 
+use actix_cors::Cors;
+use actix_governor::{Governor, GovernorConfigBuilder};
+use actix_web::http::header;
 use actix_web::middleware::from_fn;
 use actix_web::{web, App, HttpServer, Responder};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 use tracing_actix_web::TracingLogger;
@@ -30,6 +34,7 @@ use sea_orm_migration::MigratorTrait;
 
 use jiezi_cloud_server::{
     build_app_state,
+    middleware::security_headers::security_headers,
     middleware::setup_guard::setup_guard,
     repository::settings::SystemSettingsRepository,
     routes,
@@ -152,6 +157,32 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = build_app_state(db, &cfg, setup_done).await;
 
+    // ── Step 8a: Build per-IP rate limiter for authentication routes ──────────
+    // Uses a token-bucket algorithm: each IP may send at most
+    // `auth_rate_limit_per_minute` requests per minute to `/api/v1/auth/**`.
+    // On burst the client gets a 429 Too Many Requests with a Retry-After
+    // header — effectively a brute-force guard independent of the DB-level
+    // account lockout.
+    let auth_rate_secs = {
+        let per_minute = cfg.security.auth_rate_limit_per_minute.max(1) as u64;
+        // Ceil-divide so 20/min → 3 s/req, 60/min → 1 s/req.
+        60u64.div_ceil(per_minute)
+    };
+    let auth_rate_cfg = GovernorConfigBuilder::default()
+        .seconds_per_request(auth_rate_secs)
+        // Allow a short burst equal to the configured per-minute quota so
+        // legitimate page-loads (which trigger a few auth checks at once)
+        // are not rejected immediately.
+        .burst_size(cfg.security.auth_rate_limit_per_minute)
+        .use_headers() // Emit `RateLimit-*` and `Retry-After` response headers.
+        .finish()
+        .expect("invalid auth rate-limiter configuration");
+
+    // CORS allowed origins come from config; share via Arc so the closure
+    // (called once per worker) can read the list without cloning the Vec.
+    let cors_origins: Arc<Vec<String>> =
+        Arc::new(cfg.security.cors_allowed_origins.clone());
+
     // ── Step 8: Build and run Actix-web HttpServer ────────────────────────────
     let workers = if cfg.server.workers == 0 {
         std::thread::available_parallelism()
@@ -195,6 +226,32 @@ async fn main() -> std::io::Result<()> {
     let event_bus = web::Data::new(EventBus::default());
 
     HttpServer::new(move || {
+        // ── Security: CORS ────────────────────────────────────────────────────
+        // Built inside the closure because `Cors` is not `Clone`.
+        let cors = if cors_origins.is_empty() {
+            // No origins configured: permissive mode for development /
+            // home-server single-host deployments.
+            Cors::permissive()
+        } else {
+            // Restrict to explicitly-listed origins, allow usual auth headers,
+            // support credentialed requests for cookie / Bearer flows.
+            let mut c = Cors::default()
+                .allowed_methods(vec!["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+                .allowed_headers(vec![
+                    header::AUTHORIZATION,
+                    header::CONTENT_TYPE,
+                    header::ACCEPT,
+                ])
+                .supports_credentials()
+                .max_age(3600);
+            for origin in cors_origins.iter() {
+                c = c.allowed_origin(origin);
+            }
+            c
+        };
+
+        // Per-IP token-bucket guard for the auth scope.
+        let auth_governor = Governor::new(&auth_rate_cfg);
         App::new()
             .app_data(web::Data::new(app_state.clone()))
             // Shared SSE event bus — inject into EventBus::publish callers.
@@ -213,13 +270,34 @@ async fn main() -> std::io::Result<()> {
                     )
                     .into()
                 }),
-            )            // setup_guard: outermost middleware -- runs first on every request.
-            // Short-circuits with 503 if the first-run wizard is not done.
-            .wrap(from_fn(setup_guard))            // Per-request tracing span — emits structured log fields:
+            )            // setup_guard: short-circuits with 503 if the first-run wizard is
+            // not done.  Runs after CORS / security-header layers so browsers
+            // still receive those headers even during the setup phase.
+            .wrap(from_fn(setup_guard))
+            // Standard HTTP security headers (HSTS, CSP, X-Frame-Options, …).
+            .wrap(from_fn(security_headers))
+            // CORS: handles OPTIONS pre-flight and injects Allow-Origin headers.
+            .wrap(cors)
+            // Per-request tracing span — emits structured log fields:
             // request_id (UUID v7), http.method, http.target,
             // http.status_code, elapsed_milliseconds.
             .wrap(TracingLogger::default())
-            .configure(routes::configure)
+            // Route registration: the auth scope carries the per-IP rate
+            // limiter; all other scopes are wired without it.
+            // The integration-test harness uses `routes::configure` (which has
+            // no governor) so tests are never rate-limited.
+            .service(
+                web::scope("/api/v1")
+                    .service(web::scope("/setup").configure(routes::setup::configure))
+                    .service(
+                        web::scope("/auth")
+                            .wrap(auth_governor)
+                            .configure(routes::auth::configure),
+                    )
+                    .service(web::scope("/files").configure(routes::files::configure))
+                    .service(web::scope("/admin").configure(routes::admin::configure))
+                    .route("/events", web::get().to(routes::sse::events)),
+            )
             // GET /health  — liveness probe for container orchestrators (Docker,
             // Kubernetes).  Always returns 200 OK with a small JSON body.
             // Bypassed by setup_guard so probes work before setup is done.

@@ -28,6 +28,7 @@ use std::time::Duration;
 use sea_orm::DatabaseConnection;
 
 use jiezi_cloud_auth::{
+    EmailService, EmailOtpRepository,
     repository::{RefreshTokenRepository, UserRepository},
     AuthServiceImpl,
 };
@@ -59,13 +60,70 @@ pub async fn build_app_state(
     let access_ttl  = Duration::from_secs(cfg.auth.access_token_ttl_seconds);
     let refresh_ttl = Duration::from_secs(cfg.auth.refresh_token_ttl_seconds);
 
-    let auth_service = Arc::new(AuthServiceImpl::new(
-        UserRepository::new(db.clone()),
-        RefreshTokenRepository::new(db.clone()),
-        &cfg.auth.jwt_secret,
-        access_ttl,
-        refresh_ttl,
-    ));
+    let auth_service = {
+        let base = AuthServiceImpl::new(
+            UserRepository::new(db.clone()),
+            RefreshTokenRepository::new(db.clone()),
+            &cfg.auth.jwt_secret,
+            access_ttl,
+            refresh_ttl,
+        )
+        .with_security(
+            cfg.security.max_login_attempts,
+            cfg.security.lockout_duration_secs,
+            cfg.security.max_password_bytes,
+        );
+
+        // Wire email verification only when the feature is actually needed.
+        // Conditions:
+        //   email.enabled = true          → SMTP or dev-log service is active;
+        //                                   verification tokens are issued on register.
+        //   email.verification_required   → login is blocked until email is confirmed;
+        //                                   implies the feature must be enabled.
+        // When both are false: with_email() is never called, so email_repo and
+        // email_svc stay None throughout the lifetime of the service — the verify
+        // and resend routes return 500 "not configured" if somehow called.
+        let needs_email = cfg.email.enabled || cfg.email.verification_required;
+
+        let auth = if needs_email {
+            let email_svc = match EmailService::new(
+                cfg.email.enabled,
+                &cfg.email.smtp_host,
+                cfg.email.smtp_port,
+                &cfg.email.smtp_username,
+                &cfg.email.smtp_password,
+                cfg.email.from_address.clone(),
+                cfg.email.from_name.clone(),
+            ) {
+                Ok(svc) => svc,
+                Err(e) => {
+                    // Fall back to a disabled (log-only) service so the server
+                    // can still start — email is not critical to the core file
+                    // sync functionality.
+                    tracing::warn!(
+                        error = %e,
+                        "failed to build email service; OTP emails will be logged only"
+                    );
+                    EmailService::new(
+                        false, "", 587, "", "",
+                        cfg.email.from_address.clone(),
+                        cfg.email.from_name.clone(),
+                    ).expect("fallback email service build must succeed")
+                }
+            };
+            Arc::new(
+                base.with_email(
+                    cfg.email.verification_required,
+                    EmailOtpRepository::new(db.clone()),
+                    Arc::new(email_svc),
+                    cfg.email.otp_ttl_secs,
+                ),
+            )
+        } else {
+            Arc::new(base)
+        };
+        auth
+    };
 
     let vfs_service = Arc::new(VfsServiceImpl::new(FileNodeRepository::new(db.clone())));
 

@@ -29,6 +29,12 @@ pub enum AppError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// The resource existed but is no longer available (HTTP 410).
+    ///
+    /// Used for one-time tokens that have already been used or have expired.
+    #[error("gone: {0}")]
+    Gone(String),
+
     /// Input failed validation (HTTP 422).
     #[error("validation error: {0}")]
     Validation(String),

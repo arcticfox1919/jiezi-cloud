@@ -79,8 +79,33 @@ pub struct User {
     /// in bytes.  `None` means unlimited.
     pub storage_quota: Option<u64>,
 
-    /// Total bytes currently consumed by this user.
+    /// Running total of bytes consumed.
     pub storage_used: u64,
+
+    // ─ Brute-force lockout (not serialised — internal security state) ────
+
+    /// Number of consecutive failed login attempts since the last successful
+    /// login.  Reset to 0 after a successful authentication.
+    #[serde(skip)]
+    pub failed_login_count: i32,
+
+    /// When set, the account is temporarily locked and `login()` will reject
+    /// all attempts until this timestamp passes.
+    #[serde(skip)]
+    pub locked_until: Option<DateTime<Utc>>,
+
+    /// Timestamp of the most recent failed login attempt — helps the service
+    /// decide whether to extend or reset the lockout window.
+    #[serde(skip)]
+    pub last_failed_login_at: Option<DateTime<Utc>>,
+
+    // ─ Email verification ─────────────────────────────────────────
+
+    /// Whether the user has verified their email address via OTP.
+    ///
+    /// When `email.verification_required = true` in config, users must supply
+    /// the correct OTP code during registration before the account is confirmed.
+    pub email_verified: bool,
 }
 
 // ─── JWT claims ───────────────────────────────────────────────────────────────
@@ -137,6 +162,11 @@ pub struct RegisterRequest {
     pub password: String,
     /// Optional friendly name shown in the UI.
     pub display_name: Option<String>,
+    /// OTP code sent to `email` via `POST /auth/send-register-otp`.
+    ///
+    /// Required when `email.verification_required = true` in config;
+    /// ignored (and may be absent) otherwise.
+    pub email_otp: Option<String>,
 }
 
 /// Payload for updating one's own profile (display name, avatar).
@@ -158,6 +188,9 @@ pub struct ChangeOwnPasswordRequest {
     pub old_password: String,
     /// The desired new password (minimum 8 characters).
     pub new_password: String,
+    /// 6-digit OTP sent to the account email.  Required when
+    /// `email_verification_required` is enabled in config.
+    pub email_otp: Option<String>,
 }
 
 /// Payload for `PATCH /admin/users/{id}/role` — change a user's system role.
@@ -184,6 +217,36 @@ pub struct AdminResetPasswordRequest {
 pub struct SetQuotaRequest {
     /// Storage maximum in bytes.  `null` means unlimited.
     pub storage_quota: Option<u64>,
+}
+
+/// Payload for `POST /auth/logout` — revoke a refresh token (log out a device).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogoutRequest {
+    pub refresh_token: String,
+}
+
+/// Payload for `POST /auth/send-register-otp` — request an OTP for registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendOtpRequest {
+    /// The email address to send the OTP to.
+    pub email: String,
+}
+
+/// Payload for `POST /auth/reset-password` — reset password using an OTP code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetPasswordWithOtpRequest {
+    pub email:        String,
+    /// The 6-digit OTP that was emailed via `POST /auth/forgot-password`.
+    pub code:         String,
+    pub new_password: String,
+}
+
+/// Payload for `POST /auth/unlock-account` — unlock a locked account using OTP.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnlockWithOtpRequest {
+    pub email: String,
+    /// The 6-digit OTP that was emailed via `POST /auth/send-unlock-otp`.
+    pub code:  String,
 }
 
 /// Payload for the user login endpoint.

@@ -82,10 +82,30 @@ pub fn test_cfg() -> AppConfig {
         local_root       = "./test-tmp/files"
         max_upload_bytes = 10737418240
 
+        [security]
+        max_login_attempts         = 5
+        lockout_duration_secs      = 900
+        auth_rate_limit_per_minute = 20
+        cors_allowed_origins       = []
+        max_password_bytes         = 128
+
+        [email]
+        enabled               = false
+        smtp_host             = "localhost"
+        smtp_port             = 587
+        smtp_username         = ""
+        smtp_password         = ""
+        from_address          = "no-reply@test.local"
+        from_name             = "Test"
+        verification_required = false
+        otp_ttl_secs          = 600
+
         [tracing]
         level  = "warn"
         format = "compact"
     "#;
+
+    // ── NOTE: if you add new top-level config keys, mirror them here. ──────────
 
     config::Config::builder()
         .add_source(config::File::from_str(toml, config::FileFormat::Toml))
@@ -179,4 +199,124 @@ pub async fn make_app(
             ),
     )
     .await
+}
+// ─── HTTP helper functions (used by every test file) ─────────────────────────
+
+/// POST JSON to `uri`, return the raw `ServiceResponse`.
+pub async fn test_post_json<S, B>(
+    app: &S,
+    uri: &str,
+    body: serde_json::Value,
+) -> actix_web::dev::ServiceResponse<B>
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse<B>,
+        Error = actix_web::Error,
+    >,
+{
+    let req = actix_web::test::TestRequest::post()
+        .uri(uri)
+        .set_json(body)
+        .to_request();
+    actix_web::test::call_service(app, req).await
+}
+
+/// POST `/api/v1/setup/complete` for `username`; returns the raw response.
+pub async fn post_setup_complete<S, B>(
+    app: &S,
+    username: &str,
+) -> actix_web::dev::ServiceResponse<B>
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse<B>,
+        Error = actix_web::Error,
+    >,
+{
+    test_post_json(
+        app,
+        "/api/v1/setup/complete",
+        serde_json::json!({
+            "admin_username":       username,
+            "admin_email":          format!("{username}@example.com"),
+            "admin_password":       "Admin-Pass-1234!",
+            "site_name":            "Test Jiezi Cloud",
+            "registration_enabled": true
+        }),
+    )
+    .await
+}
+
+/// POST `/api/v1/auth/register` and assert 201 Created.
+pub async fn register_user<S, B>(
+    app: &S,
+    username: &str,
+    email: &str,
+    password: &str,
+)
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse<B>,
+        Error = actix_web::Error,
+    >,
+{
+    let resp = test_post_json(
+        app,
+        "/api/v1/auth/register",
+        serde_json::json!({ "username": username, "email": email, "password": password }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        actix_web::http::StatusCode::CREATED,
+        "register_user({username}) failed with {}",
+        resp.status()
+    );
+}
+
+/// POST `/api/v1/auth/login` without asserting; returns the raw response.
+pub async fn login_user<S, B>(
+    app: &S,
+    username: &str,
+    password: &str,
+) -> actix_web::dev::ServiceResponse<B>
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse<B>,
+        Error = actix_web::Error,
+    >,
+{
+    test_post_json(
+        app,
+        "/api/v1/auth/login",
+        serde_json::json!({ "credential": username, "password": password }),
+    )
+    .await
+}
+
+/// POST `/api/v1/auth/login`, assert 200 OK, return the parsed token-pair JSON.
+pub async fn do_login<S, B>(
+    app: &S,
+    username: &str,
+    password: &str,
+) -> serde_json::Value
+where
+    S: actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse<B>,
+        Error = actix_web::Error,
+    >,
+    B: actix_web::body::MessageBody + Unpin,
+{
+    let resp = login_user(app, username, password).await;
+    assert_eq!(
+        resp.status(),
+        actix_web::http::StatusCode::OK,
+        "do_login({username}) failed with {}",
+        resp.status()
+    );
+    actix_web::test::read_body_json(resp).await
 }

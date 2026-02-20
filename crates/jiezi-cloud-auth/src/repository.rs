@@ -34,7 +34,7 @@ use jiezi_cloud_core::{
     types::UserId,
 };
 
-use crate::entities::{refresh_tokens, users};
+use crate::entities::{email_otps, refresh_tokens, users};
 
 // ------ Helpers ------------------------------------------------------------------------------------------------------------------------------------
 
@@ -75,6 +75,10 @@ fn model_to_user(m: users::Model) -> AppResult<User> {
         avatar_url:    m.avatar_url,
         storage_quota: m.storage_quota.map(|q| q as u64),
         storage_used:  m.storage_used as u64,
+        failed_login_count:  m.failed_login_count,
+        locked_until:        m.locked_until,
+        last_failed_login_at: m.last_failed_login_at,
+        email_verified: m.email_verified,
         created_at:    m.created_at,
         updated_at:    m.updated_at,
     })
@@ -146,6 +150,10 @@ impl UserRepository {
             avatar_url:    Set(user.avatar_url.clone()),
             storage_quota: Set(user.storage_quota.map(|q| q as i64)),
             storage_used:  Set(user.storage_used as i64),
+            failed_login_count:   Set(0),
+            locked_until:         Set(None),
+            last_failed_login_at: Set(None),
+            email_verified:       Set(user.email_verified),
             created_at:    Set(user.created_at),
             updated_at:    Set(user.updated_at),
         };
@@ -161,6 +169,17 @@ impl UserRepository {
                     .add(users::Column::Username.eq(credential))
                     .add(users::Column::Email.eq(credential)),
             )
+            .one(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .map(model_to_user)
+            .transpose()
+    }
+
+    /// Find a user by their exact email address.
+    pub async fn find_by_email(&self, email: &str) -> AppResult<Option<User>> {
+        users::Entity::find()
+            .filter(users::Column::Email.eq(email))
             .one(&self.db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -350,6 +369,203 @@ impl UserRepository {
             Ok(())
         }
     }
+
+    // ── Brute-force lockout helpers ─────────────────────────────────────────────────────
+
+    /// Increment the failed-login counter and record the attempt timestamp.
+    ///
+    /// Returns the **new** counter value so the service can decide whether to
+    /// apply a lockout without fetching the user row again.
+    pub async fn record_failed_login(&self, id: &UserId) -> AppResult<i32> {
+        // Atomically increment so concurrent requests don't race-to-zero.
+        users::Entity::update_many()
+            .col_expr(
+                users::Column::FailedLoginCount,
+                Expr::col(users::Column::FailedLoginCount).add(1),
+            )
+            .col_expr(users::Column::LastFailedLoginAt, Expr::value(Utc::now()))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Re-fetch to get the new value (SQLite doesn't support RETURNING).
+        let row = users::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| AppError::NotFound(format!("user {id} not found")))?;
+
+        Ok(row.failed_login_count)
+    }
+
+    /// Lock the account until `until`, called after exceeding the attempt limit.
+    pub async fn lock_account(&self, id: &UserId, until: chrono::DateTime<Utc>) -> AppResult<()> {
+        users::Entity::update_many()
+            .col_expr(users::Column::LockedUntil, Expr::value(until))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Reset the failed-login counter and remove any lockout after a successful
+    /// authentication.
+    pub async fn reset_failed_login(&self, id: &UserId) -> AppResult<()> {
+        users::Entity::update_many()
+            .col_expr(users::Column::FailedLoginCount, Expr::value(0_i32))
+            .col_expr(users::Column::LockedUntil, Expr::value(Option::<chrono::DateTime<Utc>>::None))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Mark the user's email address as verified.
+    pub async fn set_email_verified(&self, id: &UserId) -> AppResult<()> {
+        let result = users::Entity::update_many()
+            .col_expr(users::Column::EmailVerified, Expr::value(true))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// ------ EmailOtpRepository ────────────────────────────────────────────────────────────────
+
+/// A persisted OTP row (pending or used).
+#[derive(Debug, Clone)]
+pub struct OtpRow {
+    pub id:         String,
+    /// The email address the OTP was sent to.  No FK to `users` — the user
+    /// may not exist yet when the `register` OTP is created.
+    pub email:      String,
+    /// The 6-digit numeric code (plaintext; TTL is the security control).
+    pub code:       String,
+    /// One of `"register"`, `"reset_password"`, or `"unlock"`.
+    pub purpose:    String,
+    pub expires_at: DateTime<Utc>,
+    pub used_at:    Option<DateTime<Utc>>,
+}
+
+/// Repository for email OTP records.
+#[derive(Clone)]
+pub struct EmailOtpRepository {
+    db: DatabaseConnection,
+}
+
+impl EmailOtpRepository {
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self { db }
+    }
+
+    /// Persist a new OTP row.
+    pub async fn create(
+        &self,
+        email:      &str,
+        code:       &str,
+        purpose:    &str,
+        expires_at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        use uuid::Uuid;
+        let am = email_otps::ActiveModel {
+            id:         Set(Uuid::new_v4().to_string()),
+            email:      Set(email.to_owned()),
+            code:       Set(code.to_owned()),
+            purpose:    Set(purpose.to_owned()),
+            expires_at: Set(expires_at),
+            used_at:    Set(None),
+        };
+        am.insert(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Find a valid (not expired, not used) OTP matching email + code + purpose.
+    pub async fn find_valid(
+        &self,
+        email:   &str,
+        code:    &str,
+        purpose: &str,
+    ) -> AppResult<Option<OtpRow>> {
+        let now = Utc::now();
+        let row = email_otps::Entity::find()
+            .filter(email_otps::Column::Email.eq(email))
+            .filter(email_otps::Column::Code.eq(code))
+            .filter(email_otps::Column::Purpose.eq(purpose))
+            .filter(email_otps::Column::ExpiresAt.gt(now))
+            .filter(email_otps::Column::UsedAt.is_null())
+            .one(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(row.map(|m| OtpRow {
+            id:         m.id,
+            email:      m.email,
+            code:       m.code,
+            purpose:    m.purpose,
+            expires_at: m.expires_at,
+            used_at:    m.used_at,
+        }))
+    }
+
+    /// Mark an OTP as consumed (sets `used_at = now()`).
+    pub async fn mark_used(&self, id: &str) -> AppResult<()> {
+        email_otps::Entity::update_many()
+            .col_expr(email_otps::Column::UsedAt, Expr::value(Utc::now()))
+            .filter(email_otps::Column::Id.eq(id))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Delete all unused OTPs for a given (email, purpose) pair.
+    ///
+    /// Called before issuing a fresh code to prevent accumulation.
+    pub async fn delete_by_email_purpose(&self, email: &str, purpose: &str) -> AppResult<()> {
+        email_otps::Entity::delete_many()
+            .filter(email_otps::Column::Email.eq(email))
+            .filter(email_otps::Column::Purpose.eq(purpose))
+            .filter(email_otps::Column::UsedAt.is_null())
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Count OTPs for a given (email, purpose) created since `since`.
+    ///
+    /// Used for per-email rate limiting: if the count exceeds a threshold, the
+    /// service should reject the send request.
+    pub async fn count_recent(
+        &self,
+        email:   &str,
+        purpose: &str,
+        since:   DateTime<Utc>,
+    ) -> AppResult<u64> {
+        use sea_orm::PaginatorTrait;
+        email_otps::Entity::find()
+            .filter(email_otps::Column::Email.eq(email))
+            .filter(email_otps::Column::Purpose.eq(purpose))
+            .filter(email_otps::Column::ExpiresAt.gt(since))
+            .count(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
 }
 
 // ------ RefreshTokenRepository ------------------------------------------------------------------------------------------------------
@@ -514,248 +730,22 @@ pub mod test_helpers {
         .await
         .expect("create refresh_tokens table");
 
+        db.execute(
+            backend.build(
+                &schema.create_table_from_entity(
+                    crate::entities::email_otps::Entity,
+                ),
+            ),
+        )
+        .await
+        .expect("create email_otps table");
+
         db
     }
 }
 
-// ------ Tests ----------------------------------------------------------------------------------------------------------------------------------------
-
+// Tests live in a separate file per CONTRIBUTING.md convention.
 #[cfg(test)]
-mod tests {
-    use super::{test_helpers::create_test_db, *};
-    use chrono::Duration;
-    use jiezi_cloud_core::models::user::Role;
-
-    // ---- Helpers ------------------------------------------------------------------------------------------------------------------------------
-
-    fn sample_user() -> User {
-        let now = Utc::now();
-        User {
-            id:            UserId::new(),
-            username:      "alice".to_owned(),
-            email:         "alice@example.com".to_owned(),
-            password_hash: "$argon2id$...".to_owned(),
-            role:          Role::Member,
-            is_active:     true,
-            display_name:  Some("Alice".to_owned()),
-            avatar_url:    None,
-            storage_quota: Some(10 * 1024 * 1024 * 1024), // 10 GiB
-            storage_used:  0,
-            created_at:    now,
-            updated_at:    now,
-        }
-    }
-
-    // ---- UserRepository tests ----------------------------------------------------------------------------------------------------
-
-    // TDD task 2.1-1: inserting a user and retrieving it by ID succeeds
-    #[tokio::test]
-    async fn test_create_and_find_user_by_id() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-        let user = sample_user();
-
-        repo.create(&user).await.unwrap();
-        let found = repo.find_by_id(&user.id).await.unwrap().unwrap();
-
-        assert_eq!(found.id,       user.id);
-        assert_eq!(found.username, user.username);
-        assert_eq!(found.email,    user.email);
-        assert_eq!(found.role,     user.role);
-    }
-
-    // TDD task 2.1-2: find user by username credential
-    #[tokio::test]
-    async fn test_find_user_by_username() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-        let user = sample_user();
-
-        repo.create(&user).await.unwrap();
-        let found = repo
-            .find_by_credential("alice")
-            .await
-            .unwrap()
-            .expect("user should be found by username");
-
-        assert_eq!(found.id, user.id);
-    }
-
-    // TDD task 2.1-3: find user by email credential
-    #[tokio::test]
-    async fn test_find_user_by_email() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-        let user = sample_user();
-
-        repo.create(&user).await.unwrap();
-        let found = repo
-            .find_by_credential("alice@example.com")
-            .await
-            .unwrap()
-            .expect("user should be found by email");
-
-        assert_eq!(found.id, user.id);
-    }
-
-    // TDD task 2.1-4: unknown credential returns None
-    #[tokio::test]
-    async fn test_find_nonexistent_user_returns_none() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-
-        let result = repo.find_by_credential("nobody").await.unwrap();
-        assert!(result.is_none());
-    }
-
-    // TDD task 2.1-5: duplicate username triggers Conflict error
-    #[tokio::test]
-    async fn test_duplicate_username_returns_conflict() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-
-        let mut user2 = sample_user();
-        user2.id    = UserId::new();
-        user2.email = "other@example.com".to_owned();
-
-        repo.create(&sample_user()).await.unwrap();
-        let err = repo.create(&user2).await.unwrap_err();
-        assert!(
-            matches!(err, AppError::Conflict(_)),
-            "expected Conflict, got {err:?}"
-        );
-    }
-
-    // TDD task 2.1-6: duplicate email triggers Conflict error
-    #[tokio::test]
-    async fn test_duplicate_email_returns_conflict() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-
-        let mut user2 = sample_user();
-        user2.id       = UserId::new();
-        user2.username = "bob".to_owned();
-
-        repo.create(&sample_user()).await.unwrap();
-        let err = repo.create(&user2).await.unwrap_err();
-        assert!(matches!(err, AppError::Conflict(_)));
-    }
-
-    // TDD task 2.1-7: storage_used counter is incremented correctly
-    #[tokio::test]
-    async fn test_add_storage_used() {
-        let db   = create_test_db().await;
-        let repo = UserRepository::new(db);
-        let user = sample_user();
-
-        repo.create(&user).await.unwrap();
-        repo.add_storage_used(&user.id, 1024).await.unwrap();
-
-        let found = repo.find_by_id(&user.id).await.unwrap().unwrap();
-        assert_eq!(found.storage_used, 1024);
-    }
-
-    // ---- RefreshTokenRepository tests ------------------------------------------------------------------------------------
-
-    // TDD task 2.1-8: token can be stored and retrieved
-    #[tokio::test]
-    async fn test_create_and_find_refresh_token() {
-        let db         = create_test_db().await;
-        let user_repo  = UserRepository::new(db.clone());
-        let token_repo = RefreshTokenRepository::new(db);
-        let user       = sample_user();
-        user_repo.create(&user).await.unwrap();
-
-        let raw     = "some.raw.jwt";
-        let family  = "family-uuid";
-        let expires = Utc::now() + Duration::days(30);
-
-        token_repo
-            .create(raw, &user.id, family, Some("iPhone 15"), expires)
-            .await
-            .unwrap();
-
-        let stored = token_repo
-            .find_by_raw_token(raw)
-            .await
-            .unwrap()
-            .expect("token should be found");
-
-        assert_eq!(stored.user_id,      user.id);
-        assert_eq!(stored.family,       family);
-        assert_eq!(stored.device_label, Some("iPhone 15".to_owned()));
-        assert!(!stored.revoked);
-    }
-
-    // TDD task 2.1-9: revoked token is marked correctly
-    #[tokio::test]
-    async fn test_revoke_refresh_token() {
-        let db         = create_test_db().await;
-        let user_repo  = UserRepository::new(db.clone());
-        let token_repo = RefreshTokenRepository::new(db);
-        let user       = sample_user();
-        user_repo.create(&user).await.unwrap();
-
-        let raw     = "revoke.me.jwt";
-        let expires = Utc::now() + Duration::days(30);
-        token_repo.create(raw, &user.id, "fam", None, expires).await.unwrap();
-
-        token_repo.revoke_by_raw_token(raw).await.unwrap();
-
-        let stored = token_repo.find_by_raw_token(raw).await.unwrap().unwrap();
-        assert!(stored.revoked);
-    }
-
-    // TDD task 2.1-10: revoking a family marks all family members as revoked
-    #[tokio::test]
-    async fn test_revoke_family_marks_all_tokens() {
-        let db         = create_test_db().await;
-        let user_repo  = UserRepository::new(db.clone());
-        let token_repo = RefreshTokenRepository::new(db);
-        let user       = sample_user();
-        user_repo.create(&user).await.unwrap();
-
-        let family  = "shared-family";
-        let expires = Utc::now() + Duration::days(30);
-
-        token_repo.create("token1.jwt", &user.id, family, None, expires).await.unwrap();
-        token_repo.create("token2.jwt", &user.id, family, None, expires).await.unwrap();
-
-        token_repo.revoke_family(family).await.unwrap();
-
-        let t1 = token_repo.find_by_raw_token("token1.jwt").await.unwrap().unwrap();
-        let t2 = token_repo.find_by_raw_token("token2.jwt").await.unwrap().unwrap();
-        assert!(t1.revoked, "token1 should be revoked");
-        assert!(t2.revoked, "token2 should be revoked");
-    }
-
-    // TDD task 2.1-11: sha256_hex is deterministic and produces hex characters
-    #[test]
-    fn test_sha256_hex_is_deterministic() {
-        let h1 = sha256_hex("hello");
-        let h2 = sha256_hex("hello");
-        assert_eq!(h1, h2);
-        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(h1.len(), 64);
-    }
-
-    // TDD task 2.1-12: list_active_for_user returns only non-revoked, non-expired tokens
-    #[tokio::test]
-    async fn test_list_active_for_user() {
-        let db         = create_test_db().await;
-        let user_repo  = UserRepository::new(db.clone());
-        let token_repo = RefreshTokenRepository::new(db);
-        let user       = sample_user();
-        user_repo.create(&user).await.unwrap();
-
-        let expires = Utc::now() + Duration::days(30);
-        token_repo.create("active.jwt",  &user.id, "fam-a", Some("iPhone"), expires).await.unwrap();
-        token_repo.create("revoked.jwt", &user.id, "fam-b", Some("iPad"),   expires).await.unwrap();
-        token_repo.revoke_by_raw_token("revoked.jwt").await.unwrap();
-
-        let active = token_repo.list_active_for_user(&user.id).await.unwrap();
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].family, "fam-a");
-    }
-}
+#[path = "repository_tests.rs"]
+mod tests;
 

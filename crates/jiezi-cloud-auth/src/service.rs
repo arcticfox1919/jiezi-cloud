@@ -24,16 +24,20 @@ use tracing::{instrument, warn};
 
 use jiezi_cloud_core::{
     error::{AppError, AppResult},
-    models::user::{Claims, LoginRequest, RegisterRequest, SessionInfo, TokenPair, User},
+    models::user::{
+        Claims, LoginRequest, RegisterRequest, ResetPasswordWithOtpRequest,
+        SendOtpRequest, SessionInfo, TokenPair, UnlockWithOtpRequest, User,
+    },
     traits::auth::AuthService,
     types::{Action, ResourceRef, UserId},
 };
 
 use crate::{
+    email::EmailService,
     jwt::JwtManager,
     password::PasswordService,
     rbac::RbacEngine,
-    repository::{RefreshTokenRepository, UserRepository},
+    repository::{EmailOtpRepository, RefreshTokenRepository, UserRepository},
 };
 
 // ─── AuthServiceImpl ──────────────────────────────────────────────────────────
@@ -48,6 +52,19 @@ pub struct AuthServiceImpl {
     token_repo: RefreshTokenRepository,
     jwt:        Arc<JwtManager>,
     refresh_ttl: Duration,
+    /// Maximum consecutive failed logins before account lockout.  0 = disabled.
+    max_login_attempts:   u32,
+    /// How long (seconds) an account stays locked after exceeding the limit.
+    lockout_duration_secs: u64,
+    /// Maximum password byte length accepted before Argon2 work begins.
+    max_password_bytes:   usize,
+    // ─ Email OTP (None = feature disabled) ────────────────────────────────
+    email_repo:                  Option<EmailOtpRepository>,
+    email_svc:                   Option<Arc<EmailService>>,
+    /// If true, registration requires a valid OTP code.
+    email_verification_required: bool,
+    /// How long (seconds) each OTP stays valid.  Default: 600 (10 min).
+    email_otp_ttl_secs:          u64,
 }
 
 impl AuthServiceImpl {
@@ -67,14 +84,62 @@ impl AuthServiceImpl {
             token_repo,
             jwt: Arc::new(JwtManager::new(jwt_secret, access_ttl, refresh_ttl)),
             refresh_ttl,
+            max_login_attempts:    5,
+            lockout_duration_secs: 900,
+            max_password_bytes:    128,
+            email_repo:                  None,
+            email_svc:                   None,
+            email_verification_required: false,
+            email_otp_ttl_secs:          600,
         }
     }
+
+    /// Override the brute-force lockout policy (called from server startup).
+    pub fn with_security(
+        mut self,
+        max_login_attempts:    u32,
+        lockout_duration_secs: u64,
+        max_password_bytes:    usize,
+    ) -> Self {
+        self.max_login_attempts    = max_login_attempts;
+        self.lockout_duration_secs = lockout_duration_secs;
+        self.max_password_bytes    = max_password_bytes;
+        self
+    }
+
+    /// Enable email OTP (called from server startup when
+    /// `email.enabled = true` or `verification_required = true` in config).
+    pub fn with_email(
+        mut self,
+        required:      bool,
+        repo:          EmailOtpRepository,
+        svc:           Arc<EmailService>,
+        otp_ttl_secs:  u64,
+    ) -> Self {
+        self.email_verification_required = required;
+        self.email_repo                  = Some(repo);
+        self.email_svc                   = Some(svc);
+        self.email_otp_ttl_secs          = otp_ttl_secs;
+        self
+    }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Generate a 6-digit numeric OTP (zero-padded).
+///
+/// Uses a UUID v4 value as an entropy source \u2014 no extra dependencies.
+fn generate_otp() -> String {
+    use uuid::Uuid;
+    let n = u64::from_str_radix(&Uuid::new_v4().simple().to_string()[..15], 16)
+        .unwrap_or(0);
+    format!("{:06}", n % 1_000_000)
 }
 
 // ─── Input validation ─────────────────────────────────────────────────────────
 
 /// Validate a [`RegisterRequest`] and return the first validation error found.
-fn validate_register(req: &RegisterRequest) -> Result<(), AppError> {
+fn validate_register(req: &RegisterRequest, max_password_bytes: usize) -> Result<(), AppError> {
     if req.username.len() < 3 || req.username.len() > 50 {
         return Err(AppError::Validation(
             "username must be between 3 and 50 characters".to_owned(),
@@ -93,6 +158,11 @@ fn validate_register(req: &RegisterRequest) -> Result<(), AppError> {
             "password must be at least 8 characters long".to_owned(),
         ));
     }
+    if req.password.len() > max_password_bytes {
+        return Err(AppError::Validation(format!(
+            "password must not exceed {max_password_bytes} bytes"
+        )));
+    }
     Ok(())
 }
 
@@ -102,7 +172,34 @@ fn validate_register(req: &RegisterRequest) -> Result<(), AppError> {
 impl AuthService for AuthServiceImpl {
     #[instrument(skip(self, req), fields(username = %req.username))]
     async fn register(&self, req: RegisterRequest) -> AppResult<User> {
-        validate_register(&req)?;
+        validate_register(&req, self.max_password_bytes)?;
+
+        // When email verification is required, the client must supply the
+        // OTP code that was emailed via `POST /auth/send-register-otp`.
+        // Verify and consume it BEFORE creating the user row so we never
+        // store an account that cannot subsequently log in.
+        if self.email_verification_required {
+            let email_repo = self
+                .email_repo
+                .as_ref()
+                .ok_or_else(|| AppError::Internal("email OTP not configured".into()))?;
+
+            let code = req.email_otp.as_deref().unwrap_or("").trim().to_owned();
+            if code.is_empty() {
+                return Err(AppError::Validation(
+                    "email_otp is required when email verification is enabled".into(),
+                ));
+            }
+            let row = email_repo
+                .find_valid(&req.email, &code, "register")
+                .await?
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "email OTP is invalid, expired, or already used".into(),
+                    )
+                })?;
+            email_repo.mark_used(&row.id).await?;
+        }
 
         let password_hash = PasswordService::hash(&req.password)?;
         let now = Utc::now();
@@ -118,6 +215,13 @@ impl AuthService for AuthServiceImpl {
             avatar_url:    None,
             storage_quota: None,
             storage_used:  0,
+            failed_login_count:  0,
+            locked_until:        None,
+            last_failed_login_at: None,
+            // The account is always fully verified at creation:
+            //   - verification_required=true  → OTP was checked above.
+            //   - verification_required=false → verification is skipped.
+            email_verified: true,
             created_at:    now,
             updated_at:    now,
         };
@@ -130,20 +234,81 @@ impl AuthService for AuthServiceImpl {
 
     #[instrument(skip(self, req), fields(credential = %req.credential))]
     async fn login(&self, req: LoginRequest) -> AppResult<TokenPair> {
+        // ── Argon2 DoS guard: reject oversized passwords before hashing ────────────
+        if req.password.len() > self.max_password_bytes {
+            return Err(AppError::Unauthorized("invalid credentials".to_owned()));
+        }
+
+        // ── Look up user ──────────────────────────────────────────────────────────────
+        // Return the same 401 for "no such user" and "wrong password" to
+        // prevent username enumeration via timing or error messages.
         let user = self
             .user_repo
             .find_by_credential(&req.credential)
             .await?
             .ok_or_else(|| AppError::Unauthorized("invalid credentials".to_owned()))?;
 
+        // ── Suspension check ─────────────────────────────────────────────────────────
         if !user.is_active {
             return Err(AppError::Forbidden("account is suspended".to_owned()));
         }
+        // ── Email verification check ──────────────────────────────────────────────
+        if self.email_verification_required && !user.email_verified {
+            return Err(AppError::Forbidden(
+                "please verify your email address before logging in".to_owned(),
+            ));
+        }
+        // ── Lockout check ──────────────────────────────────────────────────────────
+        // Check before doing any crypto work so a locked account doesn't burn
+        // Argon2 CPU time even on repeated attempts.
+        if let Some(locked_until) = user.locked_until {
+            if locked_until > Utc::now() {
+                let remaining = (locked_until - Utc::now()).num_seconds().max(0);
+                warn!(
+                    user_id  = %user.id,
+                    username = %user.username,
+                    remaining_secs = remaining,
+                    "login rejected: account is locked",
+                );
+                return Err(AppError::Forbidden(format!(
+                    "account is temporarily locked due to too many failed attempts; \
+                     try again in {remaining} seconds"
+                )));
+            }
+            // Lock has expired — let the attempt proceed.
+        }
 
+        // ── Password verification ────────────────────────────────────────────────────
         let matches = PasswordService::verify(&req.password, &user.password_hash)?;
         if !matches {
+            // Track the failure and potentially trigger lockout.
+            let new_count = self.user_repo.record_failed_login(&user.id).await?;
+
+            if self.max_login_attempts > 0 && new_count >= self.max_login_attempts as i32 {
+                let until = Utc::now()
+                    + chrono::Duration::seconds(self.lockout_duration_secs as i64);
+                self.user_repo.lock_account(&user.id, until).await?;
+                warn!(
+                    user_id          = %user.id,
+                    username         = %user.username,
+                    failed_count     = new_count,
+                    locked_until_secs = self.lockout_duration_secs,
+                    "account locked after too many failed login attempts",
+                );
+            } else {
+                warn!(
+                    user_id      = %user.id,
+                    username     = %user.username,
+                    failed_count = new_count,
+                    "failed login attempt",
+                );
+            }
+            // Always return the same generic error to prevent user enumeration.
             return Err(AppError::Unauthorized("invalid credentials".to_owned()));
         }
+
+        // ── Success: reset failure counter, issue tokens ────────────────────────
+        self.user_repo.reset_failed_login(&user.id).await?;
 
         let (access_token, expires_in) = self.jwt.generate_access_token(&user.id, user.role)?;
         let (refresh_token, family)    = self.jwt.generate_refresh_token(&user.id)?;
@@ -282,7 +447,8 @@ impl AuthService for AuthServiceImpl {
             email:        email.clone(),
             password:     password.clone(),
             display_name: display_name.clone(),
-        })?;
+            email_otp:    None,
+        }, self.max_password_bytes)?;
 
         let password_hash = PasswordService::hash(&password)?;
         let now = Utc::now();
@@ -298,6 +464,12 @@ impl AuthService for AuthServiceImpl {
             avatar_url:    None,
             storage_quota: None,
             storage_used:  0,
+            failed_login_count:  0,
+            locked_until:        None,
+            last_failed_login_at: None,
+            // The setup wizard is a trusted first-party action — no email
+            // verification loop needed for the initial owner.
+            email_verified: true,
             created_at:    now,
             updated_at:    now,
         };
@@ -313,8 +485,179 @@ impl AuthService for AuthServiceImpl {
                 "password must be at least 8 characters long".into(),
             ));
         }
+        if new_password.len() > self.max_password_bytes {
+            return Err(AppError::Validation(format!(
+                "password must not exceed {} bytes", self.max_password_bytes
+            )));
+        }
         let new_hash = PasswordService::hash(new_password)?;
         self.user_repo.update_password(user_id, &new_hash).await
+    }
+
+    // ─── Email OTP ─────────────────────────────────────────────────────────────
+
+    async fn send_register_otp(&self, req: SendOtpRequest) -> AppResult<()> {
+        // When the feature is disabled, silently succeed.
+        let (Some(email_repo), Some(email_svc)) = (&self.email_repo, &self.email_svc) else {
+            return Ok(());
+        };
+
+        let code       = generate_otp();
+        let expires_at = Utc::now()
+            + chrono::Duration::seconds(self.email_otp_ttl_secs as i64);
+
+        // Clear any pending registration OTPs for this address before issuing a new one.
+        email_repo
+            .delete_by_email_purpose(&req.email, "register")
+            .await?;
+        email_repo
+            .create(&req.email, &code, "register", expires_at)
+            .await?;
+
+        if let Err(e) = email_svc
+            .send_otp(&req.email, &req.email, &code, "register")
+            .await
+        {
+            warn!(error = %e, email = %req.email, "failed to send register OTP");
+        }
+
+        Ok(())
+    }
+
+    async fn send_reset_password_otp(&self, req: SendOtpRequest) -> AppResult<()> {
+        // Silently succeed to prevent email enumeration.
+        let (Some(email_repo), Some(email_svc)) = (&self.email_repo, &self.email_svc) else {
+            return Ok(());
+        };
+
+        // If no user with this email exists, return Ok silently.
+        let Some(user) = self.user_repo.find_by_email(&req.email).await? else {
+            return Ok(());
+        };
+
+        let code       = generate_otp();
+        let expires_at = Utc::now()
+            + chrono::Duration::seconds(self.email_otp_ttl_secs as i64);
+
+        email_repo
+            .delete_by_email_purpose(&req.email, "reset_password")
+            .await?;
+        email_repo
+            .create(&req.email, &code, "reset_password", expires_at)
+            .await?;
+
+        if let Err(e) = email_svc
+            .send_otp(&user.email, &user.username, &code, "reset_password")
+            .await
+        {
+            warn!(error = %e, email = %req.email, "failed to send password-reset OTP");
+        }
+
+        Ok(())
+    }
+
+    async fn reset_password_with_otp(&self, req: ResetPasswordWithOtpRequest) -> AppResult<()> {
+        let email_repo = self.email_repo.as_ref()
+            .ok_or_else(|| AppError::Internal("email OTP not configured".into()))?;
+
+        // Validate new password length before hitting the DB.
+        if req.new_password.len() < 8 {
+            return Err(AppError::Validation(
+                "password must be at least 8 characters long".into(),
+            ));
+        }
+        if req.new_password.len() > self.max_password_bytes {
+            return Err(AppError::Validation(format!(
+                "password must not exceed {} bytes", self.max_password_bytes
+            )));
+        }
+
+        let row = email_repo
+            .find_valid(&req.email, &req.code, "reset_password")
+            .await?
+            .ok_or_else(|| {
+                AppError::Gone(
+                    "OTP is invalid, expired, or already used".into(),
+                )
+            })?;
+        email_repo.mark_used(&row.id).await?;
+
+        let user = self
+            .user_repo
+            .find_by_email(&req.email)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("no account for email {}", req.email)))?;
+
+        let new_hash = PasswordService::hash(&req.new_password)?;
+        self.user_repo.update_password(&user.id, &new_hash).await?;
+
+        tracing::info!(email = %req.email, "password reset via OTP");
+        Ok(())
+    }
+
+    async fn send_unlock_otp(&self, req: SendOtpRequest) -> AppResult<()> {
+        // Silently succeed if feature disabled or account not found.
+        let (Some(email_repo), Some(email_svc)) = (&self.email_repo, &self.email_svc) else {
+            return Ok(());
+        };
+
+        let Some(user) = self.user_repo.find_by_email(&req.email).await? else {
+            return Ok(());
+        };
+
+        // Only send if the account is currently locked.
+        let is_locked = user
+            .locked_until
+            .map(|t| t > Utc::now())
+            .unwrap_or(false);
+        if !is_locked {
+            return Ok(());
+        }
+
+        let code       = generate_otp();
+        let expires_at = Utc::now()
+            + chrono::Duration::seconds(self.email_otp_ttl_secs as i64);
+
+        email_repo
+            .delete_by_email_purpose(&req.email, "unlock")
+            .await?;
+        email_repo
+            .create(&req.email, &code, "unlock", expires_at)
+            .await?;
+
+        if let Err(e) = email_svc
+            .send_otp(&user.email, &user.username, &code, "unlock")
+            .await
+        {
+            warn!(error = %e, email = %req.email, "failed to send unlock OTP");
+        }
+
+        Ok(())
+    }
+
+    async fn unlock_account_with_otp(&self, req: UnlockWithOtpRequest) -> AppResult<()> {
+        let email_repo = self.email_repo.as_ref()
+            .ok_or_else(|| AppError::Internal("email OTP not configured".into()))?;
+
+        let row = email_repo
+            .find_valid(&req.email, &req.code, "unlock")
+            .await?
+            .ok_or_else(|| {
+                AppError::Gone("OTP is invalid, expired, or already used".into())
+            })?;
+        email_repo.mark_used(&row.id).await?;
+
+        let user = self
+            .user_repo
+            .find_by_email(&req.email)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("no account for email {}", req.email)))?;
+
+        // Clear the lockout state.
+        self.user_repo.reset_failed_login(&user.id).await?;
+
+        tracing::info!(email = %req.email, "account unlocked via OTP");
+        Ok(())
     }
 
     async fn check_permission(
@@ -402,8 +745,64 @@ impl AuthService for AuthServiceImpl {
             return Err(AppError::Unauthorized("current password is incorrect".into()));
         }
 
+        // When email verification is required, the client must first call
+        // `POST /auth/me/send-change-password-otp` and supply the code.
+        if self.email_verification_required {
+            let email_repo = self.email_repo.as_ref()
+                .ok_or_else(|| AppError::Internal("email OTP not configured".into()))?;
+            let code = req.email_otp.as_deref().unwrap_or("").trim().to_owned();
+            if code.is_empty() {
+                return Err(AppError::Validation(
+                    "email_otp is required when email verification is enabled".into(),
+                ));
+            }
+            let row = email_repo
+                .find_valid(&user.email, &code, "change_password")
+                .await?
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "email OTP is invalid, expired, or already used".into(),
+                    )
+                })?;
+            email_repo.mark_used(&row.id).await?;
+        }
+
         let new_hash = PasswordService::hash(&req.new_password)?;
         self.user_repo.update_password(user_id, &new_hash).await
+    }
+
+    async fn send_change_password_otp(&self, user_id: &UserId) -> AppResult<()> {
+        // No-op when the feature is disabled.
+        let (Some(email_repo), Some(email_svc)) = (&self.email_repo, &self.email_svc) else {
+            return Ok(());
+        };
+
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id} not found")))?;
+
+        let code       = generate_otp();
+        let expires_at = Utc::now()
+            + chrono::Duration::seconds(self.email_otp_ttl_secs as i64);
+
+        // Replace any previous change-password OTP for this address.
+        email_repo
+            .delete_by_email_purpose(&user.email, "change_password")
+            .await?;
+        email_repo
+            .create(&user.email, &code, "change_password", expires_at)
+            .await?;
+
+        if let Err(e) = email_svc
+            .send_otp(&user.email, &user.username, &code, "change_password")
+            .await
+        {
+            warn!(error = %e, user_id = %user_id, "failed to send change-password OTP");
+        }
+
+        Ok(())
     }
 
     // ── Admin operations ──────────────────────────────────────────────────────
@@ -571,6 +970,7 @@ mod tests {
             email:       format!("{username}@example.com"),
             password:    "password123".to_owned(),
             display_name: None,
+            email_otp:   None,
         }
     }
 
@@ -602,6 +1002,7 @@ mod tests {
             email:       "ab@example.com".to_owned(),
             password:    "password123".to_owned(),
             display_name: None,
+            email_otp:   None,
         };
         let err = svc.register(req).await.unwrap_err();
         assert!(matches!(err, AppError::Validation(_)));
@@ -616,6 +1017,7 @@ mod tests {
             email:        "charlie@example.com".to_owned(),
             password:     "abc".to_owned(), // too short
             display_name: None,
+            email_otp:    None,
         };
         let err = svc.register(req).await.unwrap_err();
         assert!(matches!(err, AppError::Validation(_)));

@@ -4,5 +4,6 @@
 //! persistence; they are converted to/from the domain types defined in
 //! `jiezi-cloud-core` at the repository boundary.
 
+pub mod email_otps;
 pub mod refresh_tokens;
 pub mod users;

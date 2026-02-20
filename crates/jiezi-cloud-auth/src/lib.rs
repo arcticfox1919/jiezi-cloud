@@ -16,6 +16,7 @@
 //! The `db-sqlite` feature is enabled by default for local development.
 //! Pass a connection URL at runtime via `sea_orm::Database::connect`.
 
+pub mod email;
 pub mod entities;
 pub mod jwt;
 pub mod password;
@@ -25,4 +26,6 @@ pub mod service;
 
 // ─── Public re-exports ────────────────────────────────────────────────────────
 
+pub use email::EmailService;
+pub use repository::EmailOtpRepository;
 pub use service::AuthServiceImpl;

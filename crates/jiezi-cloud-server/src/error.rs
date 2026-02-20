@@ -56,6 +56,7 @@ impl ResponseError for ApiError {
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Gone(_) => StatusCode::GONE,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Storage(_)
             | AppError::Database(_)
