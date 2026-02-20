@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use crate::error::AppResult;
-use crate::models::user::{Claims, LoginRequest, RegisterRequest, TokenPair, User};
+use crate::models::user::{Claims, LoginRequest, RegisterRequest, SessionInfo, TokenPair, User};
 use crate::types::{Action, ResourceRef, UserId};
 
 /// Authentication and authorization service contract.
@@ -62,6 +62,21 @@ pub trait AuthService: Send + Sync {
     ///
     /// - [`AppError::NotFound`] if the token does not exist.
     async fn revoke_token(&self, refresh_token: &str) -> AppResult<()>;
+
+    /// List all active (non-revoked, non-expired) sessions for a user.
+    ///
+    /// Each entry in the returned list corresponds to a distinct device /
+    /// browser session.  The `family` field can be passed to
+    /// [`AuthService::revoke_session`] to log out a specific device.
+    async fn list_sessions(&self, user_id: &UserId) -> AppResult<Vec<SessionInfo>>;
+
+    /// Revoke all refresh tokens belonging to a specific session family,
+    /// effectively logging out a single device.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if no active session with `family` exists for the user.
+    async fn revoke_session(&self, user_id: &UserId, family: &str) -> AppResult<()>;
 
     /// Check whether a user is authorised to perform an action on a resource.
     ///

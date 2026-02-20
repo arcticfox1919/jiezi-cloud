@@ -8,6 +8,18 @@ description = "Main server binary: Actix-web HTTP API, WebSocket and QUIC file t
 name = "jiezi-cloud-server"
 path = "src/main.rs"
 
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Controls which DB driver is compiled into the server binary.
+# Build commands:
+#   SQLite  (dev):    cargo build                                       (default)
+#   PostgreSQL (prod): cargo build --no-default-features --features db-postgres
+#   MySQL      (prod): cargo build --no-default-features --features db-mysql
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["jiezi-cloud-auth/db-sqlite",   "jiezi-cloud-migration/db-sqlite"]
+db-postgres = ["jiezi-cloud-auth/db-postgres", "jiezi-cloud-migration/db-postgres"]
+db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-migration/db-mysql"]
+
 [dependencies]
 jiezi-cloud-core.workspace      = true
 jiezi-cloud-auth.workspace      = true

@@ -2,14 +2,20 @@
 name    = "jiezi-cloud-migration"
 version = "0.1.0"
 edition = "2024"
-description = "Database migration management for SQLite and PostgreSQL"
+description = "Database schema migrations for Jiezi Cloud (SeaORM, database-agnostic)"
+
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Must match the feature selected for jiezi-cloud-auth.
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm-migration/sqlx-sqlite",   "sea-orm-migration/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm-migration/sqlx-postgres", "sea-orm-migration/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm-migration/sqlx-mysql",    "sea-orm-migration/runtime-tokio-native-tls"]
 
 [dependencies]
-jiezi-cloud-core.workspace = true
-anyhow.workspace           = true
-sqlx.workspace             = true
-tokio.workspace            = true
-tracing.workspace          = true
+sea-orm-migration.workspace = true
+tracing.workspace           = true
+tokio.workspace             = true
 
 [dev-dependencies]
 tokio = { workspace = true }

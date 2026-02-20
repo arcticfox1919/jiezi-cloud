@@ -28,7 +28,7 @@ serde          = { version = "1",    features = ["derive"] }
 serde_json     = "1"
 
 # ── IDs & Time ────────────────────────────────────────────────────────────────
-uuid           = { version = "1",    features = ["v7", "serde"] }
+uuid           = { version = "1",    features = ["v4", "v7", "serde"] }
 chrono         = { version = "0.4",  features = ["serde"] }
 
 # ── Error handling ────────────────────────────────────────────────────────────
@@ -49,7 +49,13 @@ bytes          = "1"
 actix-web      = "4"
 actix-rt       = "2"
 
-# ── Database ──────────────────────────────────────────────────────────────────
+# ── Database (ORM — DB driver selected via crate-level feature flags) ─────────
+# Workspace provides the version + shared features; each crate adds its own
+# db-* feature to pull in the correct SQLx driver at compile time.
+sea-orm = { version = "1", features = ["macros", "chrono"] }
+sea-orm-migration = { version = "1" }
+
+# sqlx is kept for crates that have not yet migrated to SeaORM
 sqlx = { version = "0.8", features = [
     "runtime-tokio",
     "tls-native-tls",
@@ -65,6 +71,7 @@ sqlx = { version = "0.8", features = [
 argon2         = "0.5"
 jsonwebtoken   = "9"
 rand           = "0.9"
+sha2           = "0.10"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 config         = { version = "0.14", features = ["toml"] }

@@ -110,6 +110,9 @@ pub struct RefreshClaims {
     /// Token family identifier used to detect refresh-token reuse attacks.
     /// A reuse within the same family immediately revokes all tokens for the user.
     pub family: String,
+    /// JWT ID — a random UUID making every token cryptographically unique even
+    /// when other claims are identical (e.g. rapid rotation within the same second).
+    pub jti: String,
 }
 
 // ─── Token pair ───────────────────────────────────────────────────────────────
@@ -142,6 +145,28 @@ pub struct LoginRequest {
     /// Either a username or an email address.
     pub credential: String,
     pub password: String,
+    /// Optional human-readable label for the device initiating the login.
+    /// Shown in the active sessions list so users can identify and revoke
+    /// specific devices (e.g. "iPhone 15", "Home PC — Firefox").
+    pub device_label: Option<String>,
+}
+
+// ─── Session info ─────────────────────────────────────────────────────────────
+
+/// Represents a single active login session visible to the user.
+///
+/// Identified by its `family` UUID, which stays constant across all
+/// refresh-token rotations within the same login session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// Stable identifier for this session (JWT rotation family UUID).
+    pub family: String,
+    /// Human-readable label supplied by the client at login time.
+    pub device_label: Option<String>,
+    /// When the session was first created (i.e., when the user logged in).
+    pub session_started: DateTime<Utc>,
+    /// When the active refresh token in this session expires.
+    pub expires_at: DateTime<Utc>,
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

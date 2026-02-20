@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2024"
 description = "Authentication, JWT token management and RBAC for Jiezi Cloud"
 
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Select exactly ONE at compile time (default: SQLite for development).
+# Production: cargo build --no-default-features --features db-postgres
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm/sqlx-sqlite",   "sea-orm/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm/sqlx-postgres", "sea-orm/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm/sqlx-mysql",    "sea-orm/runtime-tokio-native-tls"]
+
 [dependencies]
 jiezi-cloud-core.workspace = true
 async-trait.workspace      = true
@@ -11,9 +20,11 @@ argon2.workspace           = true
 chrono.workspace           = true
 jsonwebtoken.workspace      = true
 rand.workspace             = true
+rand_core  = { version = "0.6", features = ["getrandom"] }
 serde.workspace            = true
 serde_json.workspace       = true
-sqlx.workspace             = true
+sea-orm.workspace          = true
+sha2.workspace             = true
 thiserror.workspace        = true
 tokio.workspace            = true
 tracing.workspace          = true
