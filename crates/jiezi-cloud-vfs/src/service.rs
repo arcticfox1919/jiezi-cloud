@@ -112,6 +112,10 @@ impl VfsService for VfsServiceImpl {
         self.repo.permanent_delete(id).await
     }
 
+    async fn list_trash(&self, owner: &UserId) -> AppResult<Vec<FileNode>> {
+        self.repo.list_trash(owner).await
+    }
+
     async fn copy_node(
         &self,
         id: &FileId,

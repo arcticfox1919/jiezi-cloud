@@ -99,6 +99,11 @@ pub trait VfsService: Send + Sync {
     /// - [`AppError::NotFound`] if `id` does not exist.
     async fn permanent_delete(&self, id: &FileId) -> AppResult<()>;
 
+    /// Return all soft-deleted nodes owned by `owner`.
+    ///
+    /// Equivalent to a per-user "trash can" view.
+    async fn list_trash(&self, owner: &UserId) -> AppResult<Vec<FileNode>>;
+
     /// Copy a node (and its subtree for directories) under `new_parent`.
     ///
     /// Returns the root of the copied subtree.  New IDs are assigned to all

@@ -3,21 +3,18 @@
 //! All routes are mounted under `/api/v1/files` by [`super::configure`].
 //! Auth is required for every endpoint (via the [`AuthUser`] extractor).
 //!
-//! | Method   | Path                      | Description                        |
-//! |----------|---------------------------|------------------------------------|
-//! | GET      | `/{id}`                   | Get a single node (file or dir)    |
-//! | GET      | `/{id}/children`          | List a directory's contents        |
-//! | POST     | `/directory`              | Create a new directory             |
-//! | PUT      | `/{id}/name`              | Rename a node                      |
-//! | POST     | `/{id}/move`              | Move a node to a new parent        |
-//! | DELETE   | `/{id}`                   | Soft-delete (move to trash)        |
-//! | POST     | `/{id}/restore`           | Restore from trash                 |
-//!
-//! # TODO
-//!
-//! - `TODO(Phase 5 — tests)`: add handler tests using `actix_web::test`.
-//! - `TODO(upload)`: `POST /files` to create a file node after chunks are uploaded.
-//! - `TODO(Phase 7)`: upload session preparation endpoint.
+//! | Method   | Path                      | Description                              |
+//! |----------|---------------------------|------------------------------------------|
+//! | GET      | `/{id}`                   | Get a single node (file or dir)          |
+//! | GET      | `/{id}/children`          | List a directory's contents              |
+//! | POST     | `/directory`              | Create a new directory                   |
+//! | PUT      | `/{id}/name`              | Rename a node                            |
+//! | POST     | `/{id}/move`              | Move a node to a new parent              |
+//! | POST     | `/{id}/copy`              | Copy a node to a new parent              |
+//! | DELETE   | `/{id}`                   | Soft-delete (move to trash)              |
+//! | POST     | `/{id}/restore`           | Restore from trash                       |
+//! | DELETE   | `/{id}/permanent`         | Permanently delete a node                |
+//! | GET      | `/trash`                  | List the current user's trash            |
 
 use std::str::FromStr;
 
@@ -35,14 +32,17 @@ use crate::state::AppState;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg
-        // Static route must come before parameterised routes to avoid conflicts.
+        // Static routes must come before parameterised routes.
         .route("/directory", web::post().to(create_directory))
-        .route("/{id}", web::get().to(get_node))
-        .route("/{id}/children", web::get().to(list_children))
-        .route("/{id}/name", web::put().to(rename))
-        .route("/{id}/move", web::post().to(move_node))
-        .route("/{id}", web::delete().to(soft_delete))
-        .route("/{id}/restore", web::post().to(restore));
+        .route("/trash",     web::get().to(list_trash))
+        .route("/{id}",                web::get().to(get_node))
+        .route("/{id}/children",       web::get().to(list_children))
+        .route("/{id}/name",           web::put().to(rename))
+        .route("/{id}/move",           web::post().to(move_node))
+        .route("/{id}/copy",           web::post().to(copy_node))
+        .route("/{id}",                web::delete().to(soft_delete))
+        .route("/{id}/restore",        web::post().to(restore))
+        .route("/{id}/permanent",      web::delete().to(permanent_delete));
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -65,6 +65,13 @@ struct RenameBody {
 /// Body for `POST /files/{id}/move`.
 #[derive(Deserialize)]
 struct MoveBody {
+    new_parent_id: String,
+}
+
+/// Body for `POST /files/{id}/copy`.
+#[derive(Deserialize)]
+struct CopyBody {
+    /// ID of the destination parent directory.
     new_parent_id: String,
 }
 
@@ -154,6 +161,47 @@ async fn restore(
     let id = parse_file_id(&path.into_inner())?;
     let node = state.vfs.restore(&id).await?;
     Ok(HttpResponse::Ok().json(node))
+}
+
+/// `DELETE /files/{id}/permanent` — permanently destroy a node.
+///
+/// Irreversible.  The node and all its descendants are removed from the
+/// database.  Content deduplication means storage chunks are only freed
+/// by a separate garbage-collection pass.
+async fn permanent_delete(
+    state: web::Data<AppState>,
+    _auth: AuthUser,
+    path: web::Path<String>,
+) -> Result<HttpResponse, ApiError> {
+    let id = parse_file_id(&path.into_inner())?;
+    state.vfs.permanent_delete(&id).await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+
+/// `POST /files/{id}/copy` — copy a node (and subtree) under a new parent.
+///
+/// Returns the root of the copied subtree with a new ID.
+async fn copy_node(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+    path:  web::Path<String>,
+    body:  web::Json<CopyBody>,
+) -> Result<HttpResponse, ApiError> {
+    let id         = parse_file_id(&path.into_inner())?;
+    let new_parent = parse_file_id(&body.new_parent_id)?;
+    let owner_id   = parse_user_id(&auth.0.sub)?;
+    let node = state.vfs.copy_node(&id, &new_parent, &owner_id).await?;
+    Ok(HttpResponse::Created().json(node))
+}
+
+/// `GET /files/trash` — list all soft-deleted nodes owned by the caller.
+async fn list_trash(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+) -> Result<HttpResponse, ApiError> {
+    let owner_id = parse_user_id(&auth.0.sub)?;
+    let nodes = state.vfs.list_trash(&owner_id).await?;
+    Ok(HttpResponse::Ok().json(nodes))
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

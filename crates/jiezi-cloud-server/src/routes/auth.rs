@@ -2,21 +2,17 @@
 //!
 //! All routes are mounted under `/api/v1/auth` by [`super::configure`].
 //!
-//! | Method   | Path                        | Auth? | Description                   |
-//! |----------|-----------------------------|-------|-------------------------------|
-//! | POST     | `/auth/register`            | No    | Create a new user account     |
-//! | POST     | `/auth/login`               | No    | Obtain a JWT token pair       |
-//! | POST     | `/auth/refresh`             | No    | Rotate the refresh token      |
-//! | GET      | `/auth/me`                  | Yes   | Return current user profile   |
-//! | POST     | `/auth/logout`              | No    | Revoke a refresh token        |
-//! | GET      | `/auth/sessions`            | Yes   | List active sessions          |
-//! | DELETE   | `/auth/sessions/{family}`   | Yes   | Revoke a specific session     |
-//!
-//! # TODO
-//!
-//! - `TODO(Phase 5 — tests)`: add handler tests using `actix_web::test`.
-//! - `TODO(get-user)`: add `AuthService::get_user_by_id` so `/me` can return
-//!   a full `User` struct instead of just `Claims`.
+//! | Method   | Path                        | Auth? | Description                            |
+//! |----------|-----------------------------|-------|----------------------------------------|
+//! | POST     | `/auth/register`            | No    | Create a new user account              |
+//! | POST     | `/auth/login`               | No    | Obtain a JWT token pair                |
+//! | POST     | `/auth/refresh`             | No    | Rotate the refresh token               |
+//! | GET      | `/auth/me`                  | Yes   | Return current user profile (full)     |
+//! | PATCH    | `/auth/me`                  | Yes   | Update display name / avatar           |
+//! | POST     | `/auth/me/password`         | Yes   | Change own password (old+new required) |
+//! | POST     | `/auth/logout`              | No    | Revoke a refresh token                 |
+//! | GET      | `/auth/sessions`            | Yes   | List active sessions                   |
+//! | DELETE   | `/auth/sessions/{family}`   | Yes   | Revoke a specific session              |
 
 use std::str::FromStr;
 

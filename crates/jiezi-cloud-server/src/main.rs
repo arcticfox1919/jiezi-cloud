@@ -256,6 +256,15 @@ async fn main() -> std::io::Result<()> {
             // http.status_code, elapsed_milliseconds.
             .wrap(TracingLogger::default())
             .configure(routes::configure)
+            // GET /health  — liveness probe for container orchestrators (Docker,
+            // Kubernetes).  Always returns 200 OK with a small JSON body.
+            // Bypassed by setup_guard so probes work before setup is done.
+            .route("/health", web::get().to(|| async {
+                actix_web::HttpResponse::Ok().json(serde_json::json!({
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION")
+                }))
+            }))
             // GET /api/v1/openapi.json  — machine-readable OpenAPI 3.1 spec
             .route(
                 "/api/v1/openapi.json",
