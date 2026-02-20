@@ -14,39 +14,27 @@
 //! 7. Wire service objects (Auth, VFS).
 //! 8. Bind and run Actix-web `HttpServer`.
 
-mod entities;
-mod error;
-mod middleware;
-mod repository;
-mod routes;
-mod state;
-
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::time::Duration;
-
 use actix_web::middleware::from_fn;
 use actix_web::{web, App, HttpServer, Responder};
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
+use std::time::Duration;
 use tracing::{error, info, warn};
 use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use utoipa::OpenApi;
 use utoipa_scalar::{Scalar, Servable as _};
 
-use jiezi_cloud_auth::{
-    repository::{RefreshTokenRepository, UserRepository},
-    AuthServiceImpl,
-};
 use jiezi_cloud_config::{AppConfig, TracingFormat};
 use jiezi_cloud_migration::Migrator;
-use jiezi_cloud_vfs::{repository::FileNodeRepository, VfsServiceImpl};
 use sea_orm_migration::MigratorTrait;
 
-use crate::middleware::setup_guard::setup_guard;
-use crate::repository::settings::SystemSettingsRepository;
-use crate::routes::sse::EventBus;
-use crate::state::AppState;
+use jiezi_cloud_server::{
+    build_app_state,
+    middleware::setup_guard::setup_guard,
+    repository::settings::SystemSettingsRepository,
+    routes,
+    routes::sse::EventBus,
+};
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -147,24 +135,8 @@ async fn main() -> std::io::Result<()> {
     // TODO(Phase 5): Start chunk integrity patrol once patrol::start_background_task
     // is implemented in jiezi-cloud-integrity.
 
-    // ── Step 7: Wire service objects ──────────────────────────────────────────
-    let access_ttl = Duration::from_secs(cfg.auth.access_token_ttl_seconds);
-    let refresh_ttl = Duration::from_secs(cfg.auth.refresh_token_ttl_seconds);
-
-    let auth_service = Arc::new(AuthServiceImpl::new(
-        UserRepository::new(db.clone()),
-        RefreshTokenRepository::new(db.clone()),
-        &cfg.auth.jwt_secret,
-        access_ttl,
-        refresh_ttl,
-    ));
-
-    let vfs_service = Arc::new(VfsServiceImpl::new(FileNodeRepository::new(db.clone())));
-
-    // ── Step 7b: Read first-run setup state from database ─────────────────────
-    // Determines whether the setup wizard guard lets requests through.
-    let settings_repo = SystemSettingsRepository::new(db.clone());
-    let setup_done = settings_repo
+    // ── Step 7: Read first-run setup flag then wire service objects ──────────
+    let setup_done = SystemSettingsRepository::new(db.clone())
         .get_bool("setup_completed")
         .await
         .unwrap_or(false);
@@ -178,15 +150,7 @@ async fn main() -> std::io::Result<()> {
         info!("First-run setup already completed");
     }
 
-    let setup_completed = Arc::new(AtomicBool::new(setup_done));
-
-    let app_state = AppState {
-        db,
-        auth: auth_service,
-        vfs: vfs_service,
-        settings: settings_repo,
-        setup_completed,
-    };
+    let app_state = build_app_state(db, &cfg, setup_done).await;
 
     // ── Step 8: Build and run Actix-web HttpServer ────────────────────────────
     let workers = if cfg.server.workers == 0 {

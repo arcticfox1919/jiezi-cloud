@@ -8,6 +8,11 @@ description = "Main server binary: Actix-web HTTP API, WebSocket and QUIC file t
 name = "jiezi-cloud-server"
 path = "src/main.rs"
 
+# Library target: exposes internal wiring for integration tests.
+[lib]
+name = "jiezi_cloud_server"
+path = "src/lib.rs"
+
 # ─── Database backend feature flags ──────────────────────────────────────────
 # Controls which DB driver is compiled into the server binary.
 # Build commands:
@@ -49,3 +54,10 @@ tracing.workspace               = true
 tracing-subscriber.workspace    = true
 chrono.workspace                = true
 anyhow.workspace                = true
+
+[dev-dependencies]
+# actix-http exposes the low-level `Request` type needed to spell out Service
+# trait bounds in the test helper's return type.
+actix-http = "3"
+# config is used in the test helper to build AppConfig from an inline TOML string.
+config     = { workspace = true }
