@@ -381,11 +381,6 @@ async fn finalize_upload(
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-#[path = "connection_tests.rs"]
-mod tests;
 
 // ─── WebSocket session entry point ────────────────────────────────────────────
 
@@ -624,3 +619,9 @@ async fn dispatch_ws_frame(
 
     Ok(())
 }
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "connection_tests.rs"]
+mod tests;

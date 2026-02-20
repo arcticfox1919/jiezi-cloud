@@ -3,7 +3,56 @@
 //! Each test gets a fresh in-memory SQLite database via [`create_test_db`],
 //! so tests are fully isolated and leave no filesystem footprint.
 
-use super::{test_helpers::create_test_db, *};
+// ─── Test helpers ─────────────────────────────────────────────────────────────
+
+pub mod test_helpers {
+    use sea_orm::{ConnectionTrait, Database, DatabaseConnection, Schema};
+
+    /// Create an in-memory SQLite database and initialise the auth schema.
+    ///
+    /// Uses `Schema::create_table_from_entity` so there is no dependency on
+    /// the `jiezi-cloud-migration` crate.
+    pub async fn create_test_db() -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite pool");
+
+        let backend = db.get_database_backend();
+        let schema  = Schema::new(backend);
+
+        // Create tables in dependency order (users first, then FK referencing it)
+        db.execute(
+            backend.build(&schema.create_table_from_entity(crate::entities::users::Entity)),
+        )
+        .await
+        .expect("create users table");
+
+        db.execute(
+            backend.build(
+                &schema.create_table_from_entity(
+                    crate::entities::refresh_tokens::Entity,
+                ),
+            ),
+        )
+        .await
+        .expect("create refresh_tokens table");
+
+        db.execute(
+            backend.build(
+                &schema.create_table_from_entity(
+                    crate::entities::email_otps::Entity,
+                ),
+            ),
+        )
+        .await
+        .expect("create email_otps table");
+
+        db
+    }
+}
+
+use super::*;
+use test_helpers::create_test_db;
 use chrono::Duration;
 use jiezi_cloud_core::models::user::Role;
 
