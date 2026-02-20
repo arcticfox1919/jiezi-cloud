@@ -21,6 +21,14 @@ url             = "postgres://jiezi:changeme@localhost/jiezi"
 max_connections = 20
 min_connections = 2
 
+[database.backup]
+enabled          = true
+interval_minutes = 10    # more frequent in production
+keep_count       = 144  # 24 hours at 10-min intervals
+# IMPORTANT: point 'dir' at a different physical device in production.
+# Override via JIEZI__DATABASE__BACKUP__DIR or config/local.toml.
+dir = "./data/backups/db"
+
 [tracing]
 level  = "info"
 format = "json"      # structured JSON for log aggregators (Loki, CloudWatch, etc.)

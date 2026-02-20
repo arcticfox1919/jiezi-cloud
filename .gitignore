@@ -21,9 +21,16 @@ config/local.toml
 *.pem
 *.key
 
-# Runtime data directory (SQLite databases, uploaded files)
-/data/
+# Runtime data directory.
+# Git negation rules require expanding each level:
+# ignore dir/* → un-ignore subdir → ignore subdir/* → un-ignore specific file
+/data/*
 !/data/.gitkeep
+!/data/backups/
+/data/backups/*
+!/data/backups/db/
+/data/backups/db/*
+!/data/backups/db/.gitkeep
 
 # Temporary files
 build_output.txt

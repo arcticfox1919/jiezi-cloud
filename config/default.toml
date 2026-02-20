@@ -34,6 +34,12 @@ jwt_secret                = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
 access_token_ttl_seconds  = 900       # 15 minutes
 refresh_token_ttl_seconds = 2592000   # 30 days
 
+[database.backup]
+enabled          = true
+interval_minutes = 15
+keep_count       = 48        # 12 hours at 15-min intervals (48 x 15 min)
+dir              = "./data/backups/db"
+
 # ── File storage ──────────────────────────────────────────────────────────────
 [storage]
 local_root        = "./data/files"

@@ -13,6 +13,7 @@ members = [
     "crates/jiezi-cloud-server",
     "crates/jiezi-cloud-migration",
     "crates/jiezi-cloud-config",
+    "crates/jiezi-cloud-integrity",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -78,12 +79,16 @@ sha2           = "0.10"
 config         = { version = "0.14", features = ["toml"] }
 dotenvy        = "0.15"
 
+# ── URL parsing (used by integrity crate to parse MySQL/PostgreSQL URLs) ──────
+url            = "2"
+
 # ── Search ────────────────────────────────────────────────────────────────────
 tantivy        = "0.22"
 
 # ── Crate inter-dependencies ──────────────────────────────────────────────────
 jiezi-cloud-core      = { path = "crates/jiezi-cloud-core" }
 jiezi-cloud-config    = { path = "crates/jiezi-cloud-config" }
+jiezi-cloud-integrity = { path = "crates/jiezi-cloud-integrity" }
 jiezi-cloud-auth      = { path = "crates/jiezi-cloud-auth" }
 jiezi-cloud-storage   = { path = "crates/jiezi-cloud-storage" }
 jiezi-cloud-vfs       = { path = "crates/jiezi-cloud-vfs" }

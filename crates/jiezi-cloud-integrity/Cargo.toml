@@ -1,0 +1,22 @@
+[package]
+name        = "jiezi-cloud-integrity"
+version     = "0.1.0"
+edition     = "2024"
+description = "Database durability, hot-backup, and integrity-checking services for Jiezi Cloud"
+
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Must match the flags used by the binary crate (jiezi-cloud-server).
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm/sqlx-sqlite",   "sea-orm/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm/sqlx-postgres", "sea-orm/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm/sqlx-mysql",    "sea-orm/runtime-tokio-native-tls"]
+
+[dependencies]
+jiezi-cloud-config.workspace = true
+sea-orm.workspace            = true
+tokio.workspace              = true
+tracing.workspace            = true
+thiserror.workspace          = true
+chrono.workspace             = true
+url.workspace                = true

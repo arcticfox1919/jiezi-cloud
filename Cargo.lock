@@ -1672,6 +1672,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jiezi-cloud-integrity"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "jiezi-cloud-config",
+ "sea-orm",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "jiezi-cloud-migration"
 version = "0.1.0"
 dependencies = [

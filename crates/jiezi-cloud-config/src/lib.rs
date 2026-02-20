@@ -122,6 +122,47 @@ pub struct DatabaseConfig {
 
     /// Seconds to wait before a connection attempt times out.
     pub connect_timeout_seconds: u64,
+
+    /// Automatic hot-backup settings (primarily for SQLite; see [`DatabaseBackupConfig`]).
+    pub backup: DatabaseBackupConfig,
+}
+
+/// Automatic database backup configuration.
+///
+/// For **SQLite** the backup is performed via `VACUUM INTO` (SQLite 3.27+), which
+/// creates a consistent, compacted snapshot of the live database without blocking
+/// writers.  The backup file is a standard SQLite file that can be opened
+/// directly with any SQLite tool.
+///
+/// For **PostgreSQL / MySQL** this setting is ignored — use `pg_dump` / `mysqldump`
+/// managed by your database server or the OS scheduler instead.
+///
+/// # Durability note
+///
+/// Backups protect against **disk hardware failure** and **software corruption
+/// that is detected too late**.  Against **power-cut-induced mid-write corruption**
+/// the first line of defence is SQLite WAL mode (`PRAGMA journal_mode=WAL` +
+/// `PRAGMA synchronous=FULL`), which must be set when opening the database
+/// connection — see `jiezi-cloud-integrity::db_pragmas`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseBackupConfig {
+    /// Enable or disable automatic periodic backups.
+    pub enabled: bool,
+
+    /// How often to run a backup, in minutes.
+    pub interval_minutes: u64,
+
+    /// Number of backup files to retain before rotating (oldest first).
+    ///
+    /// Default is 48 (= 12 hours at 15-minute intervals).
+    pub keep_count: usize,
+
+    /// Directory where backup `.db` files are stored.
+    ///
+    /// Relative paths are resolved against the process working directory.
+    /// Ideally point this at a **different physical device** (e.g. a USB drive
+    /// or network share) to protect against the primary disk failing.
+    pub dir: PathBuf,
 }
 
 // ---- Auth -------------------------------------------------------------------
@@ -333,7 +374,17 @@ mod tests {
         assert!(cfg.validate().is_err());
     }
 
-    // Test 7: Environment::is_production / is_development helpers
+    // Test 7: backup config defaults are sane
+    #[test]
+    fn test_backup_config_defaults() {
+        let cfg = load_from(test_config_dir()).unwrap();
+        assert!(cfg.database.backup.enabled);
+        assert!(cfg.database.backup.interval_minutes > 0);
+        assert!(cfg.database.backup.keep_count >= 4,
+            "keep at least 4 backups (1 hour at 15-min intervals)");
+    }
+
+    // Test 8: Environment::is_production / is_development helpers
     #[test]
     fn test_environment_helpers() {
         assert!(Environment::Production.is_production());
