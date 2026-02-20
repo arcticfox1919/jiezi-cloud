@@ -13,11 +13,17 @@
 .DS_Store
 Thumbs.db
 
-# Env / secrets
+# Env / secrets -- .env.example is intentionally committed as a template
 .env
-.env.*
+.env.local
+.env.*.local
+config/local.toml
 *.pem
 *.key
+
+# Runtime data directory (SQLite databases, uploaded files)
+/data/
+!/data/.gitkeep
 
 # Temporary files
 build_output.txt

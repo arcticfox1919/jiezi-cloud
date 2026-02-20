@@ -1647,6 +1647,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jiezi-cloud-config"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "dotenvy",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jiezi-cloud-core"
 version = "0.1.0"
 dependencies = [
@@ -1706,6 +1716,7 @@ dependencies = [
  "config",
  "jiezi-cloud-ai",
  "jiezi-cloud-auth",
+ "jiezi-cloud-config",
  "jiezi-cloud-core",
  "jiezi-cloud-migration",
  "jiezi-cloud-preview",

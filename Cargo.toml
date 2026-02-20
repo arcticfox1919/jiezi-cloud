@@ -12,6 +12,7 @@ members = [
     "crates/jiezi-cloud-sync",
     "crates/jiezi-cloud-server",
     "crates/jiezi-cloud-migration",
+    "crates/jiezi-cloud-config",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,12 +76,14 @@ sha2           = "0.10"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 config         = { version = "0.14", features = ["toml"] }
+dotenvy        = "0.15"
 
 # ── Search ────────────────────────────────────────────────────────────────────
 tantivy        = "0.22"
 
 # ── Crate inter-dependencies ──────────────────────────────────────────────────
 jiezi-cloud-core      = { path = "crates/jiezi-cloud-core" }
+jiezi-cloud-config    = { path = "crates/jiezi-cloud-config" }
 jiezi-cloud-auth      = { path = "crates/jiezi-cloud-auth" }
 jiezi-cloud-storage   = { path = "crates/jiezi-cloud-storage" }
 jiezi-cloud-vfs       = { path = "crates/jiezi-cloud-vfs" }

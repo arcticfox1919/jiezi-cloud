@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Jiezi Cloud — Default configuration
+#
+# This file contains base values for ALL environments.  It is committed to git
+# and must never contain secrets.
+#
+# Override precedence (highest wins):
+#   environment variables (JIEZI__SECTION__KEY)
+#   config/local.toml          ← machine-local, git-ignored
+#   config/{environment}.toml  ← development.toml / production.toml
+#   config/default.toml        ← this file
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment = "development"
+
+# ── HTTP server ───────────────────────────────────────────────────────────────
+[server]
+host    = "127.0.0.1"
+port    = 8080
+workers = 0            # 0 = use available_parallelism (one thread per CPU core)
+
+# ── Database ──────────────────────────────────────────────────────────────────
+[database]
+url                     = "sqlite:./data/jiezi-dev.db?mode=rwc"
+max_connections         = 5
+min_connections         = 1
+connect_timeout_seconds = 30
+
+# ── Authentication ────────────────────────────────────────────────────────────
+[auth]
+# WARNING: change this via JIEZI__AUTH__JWT_SECRET in production.
+# The server will refuse to start if this placeholder is used in production.
+jwt_secret                = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
+access_token_ttl_seconds  = 900       # 15 minutes
+refresh_token_ttl_seconds = 2592000   # 30 days
+
+# ── File storage ──────────────────────────────────────────────────────────────
+[storage]
+local_root        = "./data/files"
+max_upload_bytes  = 10737418240   # 10 GiB
+
+# ── Tracing / logging ─────────────────────────────────────────────────────────
+[tracing]
+level  = "debug"
+format = "pretty"   # pretty | json | compact

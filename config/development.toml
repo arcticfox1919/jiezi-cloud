@@ -1,0 +1,12 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Jiezi Cloud — Development overrides
+#
+# Applied on top of default.toml when JIEZI__ENVIRONMENT=development (default).
+# Commit this file; it must contain no secrets.
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment = "development"
+
+[tracing]
+level  = "debug"
+format = "pretty"

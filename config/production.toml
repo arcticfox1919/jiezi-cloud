@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Jiezi Cloud — Production overrides
+#
+# Applied on top of default.toml when JIEZI__ENVIRONMENT=production.
+# Commit this file; supply all secrets exclusively via environment variables.
+#
+# Required environment variables for production:
+#   JIEZI__AUTH__JWT_SECRET   — long random string (>= 32 chars)
+#   JIEZI__DATABASE__URL      — production database URL
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment = "production"
+
+[server]
+host    = "0.0.0.0"
+workers = 0          # use all available CPU cores
+
+[database]
+# Override via JIEZI__DATABASE__URL — never hard-code prod credentials here.
+url             = "postgres://jiezi:changeme@localhost/jiezi"
+max_connections = 20
+min_connections = 2
+
+[tracing]
+level  = "info"
+format = "json"      # structured JSON for log aggregators (Loki, CloudWatch, etc.)

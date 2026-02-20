@@ -1,0 +1,13 @@
+[package]
+name        = "jiezi-cloud-config"
+version     = "0.1.0"
+edition     = "2024"
+description = "Layered configuration loading for Jiezi Cloud (files + env vars)"
+
+[dependencies]
+config.workspace   = true
+dotenvy.workspace  = true
+serde.workspace    = true
+thiserror.workspace = true
+
+[dev-dependencies]

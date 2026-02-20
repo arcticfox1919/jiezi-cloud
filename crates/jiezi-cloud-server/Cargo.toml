@@ -22,6 +22,7 @@ db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-migration/db-mysql"]
 
 [dependencies]
 jiezi-cloud-core.workspace      = true
+jiezi-cloud-config.workspace    = true
 jiezi-cloud-auth.workspace      = true
 jiezi-cloud-storage.workspace   = true
 jiezi-cloud-vfs.workspace       = true
