@@ -4,12 +4,22 @@ version = "0.1.0"
 edition = "2024"
 description = "Virtual file system: directory tree, metadata, versioning and trash"
 
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Select exactly ONE at compile time (default: SQLite for development).
+# Production: cargo build --no-default-features --features db-postgres
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm/sqlx-sqlite",   "sea-orm/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm/sqlx-postgres", "sea-orm/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm/sqlx-mysql",    "sea-orm/runtime-tokio-native-tls"]
+
 [dependencies]
 jiezi-cloud-core.workspace = true
 async-trait.workspace      = true
 chrono.workspace           = true
 serde.workspace            = true
-sqlx.workspace             = true
+serde_json.workspace       = true
+sea-orm.workspace          = true
 thiserror.workspace        = true
 tokio.workspace            = true
 tracing.workspace          = true

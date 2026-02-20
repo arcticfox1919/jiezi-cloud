@@ -22,6 +22,9 @@
 
 pub mod m20260220_000001_create_users;
 pub mod m20260220_000002_create_refresh_tokens;
+pub mod m20260220_000003_create_spaces;
+pub mod m20260220_000004_create_file_nodes;
+pub mod m20260220_000005_create_file_node_paths;
 
 use sea_orm_migration::prelude::*;
 
@@ -35,6 +38,9 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20260220_000001_create_users::Migration),
             Box::new(m20260220_000002_create_refresh_tokens::Migration),
+            Box::new(m20260220_000003_create_spaces::Migration),
+            Box::new(m20260220_000004_create_file_nodes::Migration),
+            Box::new(m20260220_000005_create_file_node_paths::Migration),
         ]
     }
 }
