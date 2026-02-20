@@ -50,7 +50,7 @@ use jiezi_cloud_core::{
     types::{BackendId, HealthStatus},
 };
 
-use crate::hashing::sha256_hex;
+use crate::hashing::{sha256_hex, validate_key};
 
 /// Local filesystem implementation of [`StorageBackend`].
 ///
@@ -92,46 +92,6 @@ impl LocalFsBackend {
     fn expected_hash(key: &str) -> &str {
         key.rsplit('/').next().unwrap_or(key)
     }
-}
-
-/// Validate that `key` is a safe relative path.
-///
-/// Rejects keys that:
-/// - Are empty.
-/// - Are absolute (start with `/`, `\`, or a Windows drive like `C:`).
-/// - Contain path traversal segments (`..` or `.`).
-/// - Contain backslashes (always use `/` as separator).
-fn validate_key(key: &str) -> AppResult<()> {
-    if key.is_empty() {
-        return Err(AppError::Validation("chunk key must not be empty".to_owned()));
-    }
-    if key.starts_with('/') || key.starts_with('\\') {
-        return Err(AppError::Validation(format!(
-            "chunk key must be relative, got: {key}"
-        )));
-    }
-    // Windows drive letter e.g. "C:" or "C:\"
-    if key.len() >= 2
-        && key.chars().nth(1) == Some(':')
-        && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
-    {
-        return Err(AppError::Validation(format!(
-            "chunk key must be relative, got: {key}"
-        )));
-    }
-    if key.contains('\\') {
-        return Err(AppError::Validation(format!(
-            "chunk key must use '/' separators, got: {key}"
-        )));
-    }
-    for component in key.split('/') {
-        if component == ".." || component == "." {
-            return Err(AppError::Validation(format!(
-                "chunk key contains path traversal: {key}"
-            )));
-        }
-    }
-    Ok(())
 }
 
 #[async_trait]

@@ -3,6 +3,7 @@
 //! All models are pure data structures with no business logic or I/O.
 //! They form the shared vocabulary between every crate in the workspace.
 
+pub mod backend;
 pub mod chunk;
 pub mod file;
 pub mod share;

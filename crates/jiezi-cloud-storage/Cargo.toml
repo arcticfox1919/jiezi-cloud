@@ -2,7 +2,7 @@
 name    = "jiezi-cloud-storage"
 version = "0.1.0"
 edition = "2024"
-description = "Storage backends (local filesystem, S3/MinIO, WebDAV) and CDC chunking"
+description = "Storage backends (local filesystem, S3-compatible, WebDAV) and CDC chunking"
 
 [dependencies]
 jiezi-cloud-core.workspace = true
@@ -10,8 +10,11 @@ async-trait.workspace      = true
 bytes.workspace            = true
 fastcdc.workspace          = true
 hex.workspace              = true
+object_store.workspace     = true
+reqwest_dav.workspace      = true
 sha2.workspace             = true
 serde.workspace            = true
+serde_json.workspace       = true
 thiserror.workspace        = true
 tokio.workspace            = true
 tracing.workspace          = true

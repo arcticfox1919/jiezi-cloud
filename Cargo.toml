@@ -86,6 +86,15 @@ dotenvy        = "0.15"
 # ── URL parsing (used by integrity crate to parse MySQL/PostgreSQL URLs) ──────
 url            = "2"
 
+# ── Object storage (S3/GCS/Azure) ────────────────────────────────────────────
+object_store   = { version = "0.11", features = ["aws"] }
+
+# ── HTTP client (third-party APIs) ─────────────────────────────────────────
+reqwest        = { version = "0.12", features = ["json", "stream"] }
+
+# ── WebDAV client (Nextcloud, ownCloud, nginx dav, …) ───────────────────────
+reqwest_dav    = "0.3"
+
 # ── Search ────────────────────────────────────────────────────────────────────
 tantivy        = "0.22"
 

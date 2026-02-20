@@ -25,6 +25,9 @@ pub mod m20260220_000002_create_refresh_tokens;
 pub mod m20260220_000003_create_spaces;
 pub mod m20260220_000004_create_file_nodes;
 pub mod m20260220_000005_create_file_node_paths;
+pub mod m20260220_000006_create_storage_backend_configs;
+pub mod m20260220_000007_create_chunk_locations;
+pub mod m20260220_000008_create_file_chunks;
 
 use sea_orm_migration::prelude::*;
 
@@ -41,6 +44,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260220_000003_create_spaces::Migration),
             Box::new(m20260220_000004_create_file_nodes::Migration),
             Box::new(m20260220_000005_create_file_node_paths::Migration),
+            Box::new(m20260220_000006_create_storage_backend_configs::Migration),
+            Box::new(m20260220_000007_create_chunk_locations::Migration),
+            Box::new(m20260220_000008_create_file_chunks::Migration),
         ]
     }
 }
