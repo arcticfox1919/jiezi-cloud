@@ -1,5 +1,6 @@
 //! HTTP route configuration for the `/api/v1` namespace.
 
+pub mod admin;
 pub mod auth;
 pub mod files;
 pub mod setup;
@@ -17,6 +18,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/setup").configure(setup::configure))
             .service(web::scope("/auth").configure(auth::configure))
             .service(web::scope("/files").configure(files::configure))
+            // Admin operations (Owner / Admin role required per-handler).
+            .service(web::scope("/admin").configure(admin::configure))
             // GET /api/v1/events  — SSE real-time push stream
             .route("/events", web::get().to(sse::events)),
     );

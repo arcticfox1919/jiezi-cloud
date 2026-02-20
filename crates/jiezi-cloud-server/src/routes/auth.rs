@@ -24,7 +24,7 @@ use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 
 use jiezi_cloud_core::error::AppError;
-use jiezi_cloud_core::models::user::{LoginRequest, RegisterRequest};
+use jiezi_cloud_core::models::user::{ChangeOwnPasswordRequest, LoginRequest, RegisterRequest, UpdateProfileRequest};
 use jiezi_cloud_core::types::UserId;
 
 use crate::error::ApiError;
@@ -38,6 +38,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .route("/login", web::post().to(login))
         .route("/refresh", web::post().to(refresh))
         .route("/me", web::get().to(me))
+        .route("/me", web::patch().to(update_me))
+        .route("/me/password", web::post().to(change_password))
         .route("/logout", web::post().to(logout))
         .route("/sessions", web::get().to(list_sessions))
         .route("/sessions/{family}", web::delete().to(revoke_session));
@@ -88,14 +90,50 @@ async fn refresh(
     Ok(HttpResponse::Ok().json(tokens))
 }
 
-/// `GET /auth/me` — return the current user's identity.
+/// `GET /auth/me` — return the current user's full profile.
+async fn me(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = parse_user_id(&auth.0.sub)?;
+    let user = state.auth.get_user(&user_id).await.map_err(ApiError)?;
+    Ok(HttpResponse::Ok().json(user))
+}
+
+/// `PATCH /auth/me` — update the current user's display name and / or avatar.
 ///
-/// TODO(get-user): once `AuthService::get_user_by_id` is implemented, replace
-/// the `Claims` response with a full `User` struct.
-async fn me(auth: AuthUser) -> Result<HttpResponse, ApiError> {
-    // For now, surface the claims embedded in the token.
-    // The `sub` field is the user's UUID; `role` is their system role.
-    Ok(HttpResponse::Ok().json(&auth.0))
+/// Only the fields present in the request body are updated.  Omit a field
+/// entirely to leave it unchanged; set it to `null` to clear it.
+async fn update_me(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+    body:  web::Json<UpdateProfileRequest>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = parse_user_id(&auth.0.sub)?;
+    let updated = state
+        .auth
+        .update_profile(&user_id, body.into_inner())
+        .await
+        .map_err(ApiError)?;
+    Ok(HttpResponse::Ok().json(updated))
+}
+
+/// `POST /auth/me/password` — change the current user's own password.
+///
+/// Requires the caller to supply their **current** password in `old_password`.
+/// For admin-initiated forced resets see `POST /admin/users/{id}/reset-password`.
+async fn change_password(
+    state: web::Data<AppState>,
+    auth:  AuthUser,
+    body:  web::Json<ChangeOwnPasswordRequest>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = parse_user_id(&auth.0.sub)?;
+    state
+        .auth
+        .change_own_password(&user_id, body.into_inner())
+        .await
+        .map_err(ApiError)?;
+    Ok(HttpResponse::NoContent().finish())
 }
 
 /// `POST /auth/logout` — revoke a refresh token (log out a device).

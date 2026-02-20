@@ -229,6 +229,127 @@ impl UserRepository {
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
+
+    /// Return a paginated page of users ordered by creation time (newest first).
+    ///
+    /// Returns `(rows, total_count)`.
+    pub async fn list(&self, offset: u64, limit: u64) -> AppResult<(Vec<User>, u64)> {
+        use sea_orm::{PaginatorTrait, QueryOrder, QuerySelect};
+
+        let total = users::Entity::find()
+            .count(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = users::Entity::find()
+            .order_by_desc(users::Column::CreatedAt)
+            .offset(offset)
+            .limit(limit)
+            .all(&self.db)
+            .await
+            .map_err(|e: sea_orm::DbErr| AppError::Database(e.to_string()))?;
+
+        let users_vec = rows.into_iter().map(model_to_user).collect::<AppResult<Vec<_>>>()?;
+        Ok((users_vec, total))
+    }
+
+    /// Overwrite the system-level role string for a user.
+    pub async fn update_role(&self, id: &UserId, role: Role) -> AppResult<()> {
+        let result = users::Entity::update_many()
+            .col_expr(users::Column::Role, Expr::value(role.to_string()))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Set `is_active` for a user (suspend / reactivate).
+    pub async fn set_active(&self, id: &UserId, active: bool) -> AppResult<()> {
+        let result = users::Entity::update_many()
+            .col_expr(users::Column::IsActive, Expr::value(active))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Permanently delete a user row and all their refresh tokens.
+    pub async fn delete(&self, id: &UserId) -> AppResult<()> {
+        let result = users::Entity::delete_by_id(id.to_string())
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Update profile fields.
+    ///
+    /// Each argument is `Option<Option<String>>`:
+    /// - `None`       → field not touched.
+    /// - `Some(None)` → field cleared to NULL.
+    /// - `Some(Some(v))` → field set to `v`.
+    pub async fn update_profile(
+        &self,
+        id:           &UserId,
+        display_name: Option<Option<String>>,
+        avatar_url:   Option<Option<String>>,
+    ) -> AppResult<()> {
+        use sea_orm::ActiveValue::{NotSet, Set};
+
+        // Build a partial ActiveModel — only set the fields that changed.
+        let am = users::ActiveModel {
+            id:           Set(id.to_string()),
+            updated_at:   Set(Utc::now()),
+            display_name: match display_name {
+                Some(v) => Set(v),
+                None    => NotSet,
+            },
+            avatar_url:   match avatar_url {
+                Some(v) => Set(v),
+                None    => NotSet,
+            },
+            ..Default::default()
+        };
+        am.update(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Overwrite the per-user storage quota.  `None` = unlimited.
+    pub async fn update_quota(&self, id: &UserId, quota: Option<u64>) -> AppResult<()> {
+        let result = users::Entity::update_many()
+            .col_expr(
+                users::Column::StorageQuota,
+                Expr::value(quota.map(|q| q as i64)),
+            )
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 // ------ RefreshTokenRepository ------------------------------------------------------------------------------------------------------
@@ -309,6 +430,18 @@ impl RefreshTokenRepository {
         refresh_tokens::Entity::update_many()
             .col_expr(refresh_tokens::Column::Revoked, Expr::value(true))
             .filter(refresh_tokens::Column::Family.eq(family))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Revoke every token for a user — used when the account is being deleted
+    /// so that active sessions cannot be replayed.
+    pub async fn revoke_all_for_user(&self, user_id: &UserId) -> AppResult<()> {
+        refresh_tokens::Entity::update_many()
+            .col_expr(refresh_tokens::Column::Revoked, Expr::value(true))
+            .filter(refresh_tokens::Column::UserId.eq(user_id.to_string()))
             .exec(&self.db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;

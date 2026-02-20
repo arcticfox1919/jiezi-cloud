@@ -331,6 +331,205 @@ impl AuthService for AuthServiceImpl {
 
         Ok(RbacEngine::is_permitted(user.role, action))
     }
+
+    // ── User lookup ───────────────────────────────────────────────────────────
+
+    async fn get_user(&self, user_id: &UserId) -> AppResult<User> {
+        self.user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id} not found")))
+    }
+
+    async fn list_users(
+        &self,
+        page: &jiezi_cloud_core::types::PageRequest,
+    ) -> AppResult<jiezi_cloud_core::types::PageResponse<User>> {
+        let (users, total) = self
+            .user_repo
+            .list(page.offset(), page.limit())
+            .await?;
+        Ok(jiezi_cloud_core::types::PageResponse::new(
+            users,
+            total,
+            page.page,
+            page.per_page,
+        ))
+    }
+
+    // ── Self-service ──────────────────────────────────────────────────────────
+
+    async fn update_profile(
+        &self,
+        user_id: &UserId,
+        req:     jiezi_cloud_core::models::user::UpdateProfileRequest,
+    ) -> AppResult<User> {
+        // Ensure the user exists before writing.
+        self.user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id} not found")))?;
+
+        self.user_repo
+            .update_profile(user_id, req.display_name, req.avatar_url)
+            .await?;
+
+        // Return the refreshed user.
+        self.user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id} not found")))
+    }
+
+    async fn change_own_password(
+        &self,
+        user_id: &UserId,
+        req:     jiezi_cloud_core::models::user::ChangeOwnPasswordRequest,
+    ) -> AppResult<()> {
+        if req.new_password.len() < 8 {
+            return Err(AppError::Validation(
+                "new password must be at least 8 characters long".into(),
+            ));
+        }
+        let user = self
+            .user_repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {user_id} not found")))?;
+
+        let matches = PasswordService::verify(&req.old_password, &user.password_hash)?;
+        if !matches {
+            return Err(AppError::Unauthorized("current password is incorrect".into()));
+        }
+
+        let new_hash = PasswordService::hash(&req.new_password)?;
+        self.user_repo.update_password(user_id, &new_hash).await
+    }
+
+    // ── Admin operations ──────────────────────────────────────────────────────
+
+    async fn update_user_role(
+        &self,
+        caller_role: jiezi_cloud_core::models::user::Role,
+        caller_id:   &UserId,
+        target_id:   &UserId,
+        req:         jiezi_cloud_core::models::user::ChangeRoleRequest,
+    ) -> AppResult<User> {
+        use jiezi_cloud_core::models::user::Role;
+
+        if caller_id == target_id {
+            return Err(AppError::Forbidden(
+                "you cannot change your own role".into(),
+            ));
+        }
+
+        let target = self
+            .user_repo
+            .find_by_id(target_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {target_id} not found")))?;
+
+        // Permission matrix:
+        //  - Owner  → can set any role, including Owner and Admin.
+        //  - Admin  → can only set Member / Guest; cannot touch Owner/Admin.
+        match caller_role {
+            Role::Owner => { /* unrestricted */ }
+            Role::Admin => {
+                if matches!(target.role, Role::Owner | Role::Admin) {
+                    return Err(AppError::Forbidden(
+                        "admin cannot change the role of an owner or another admin".into(),
+                    ));
+                }
+                if matches!(req.new_role, Role::Owner | Role::Admin) {
+                    return Err(AppError::Forbidden(
+                        "admin cannot promote a user to owner or admin".into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(AppError::Forbidden(
+                    "only owner or admin can change user roles".into(),
+                ));
+            }
+        }
+
+        self.user_repo.update_role(target_id, req.new_role).await?;
+
+        self.user_repo
+            .find_by_id(target_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {target_id} not found")))
+    }
+
+    async fn set_user_active(
+        &self,
+        caller_role: jiezi_cloud_core::models::user::Role,
+        target_id:   &UserId,
+        req:         jiezi_cloud_core::models::user::SetActiveRequest,
+    ) -> AppResult<()> {
+        use jiezi_cloud_core::models::user::Role;
+
+        let target = self
+            .user_repo
+            .find_by_id(target_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {target_id} not found")))?;
+
+        // Admin cannot suspend an Owner.
+        if matches!(caller_role, Role::Admin) && matches!(target.role, Role::Owner) {
+            return Err(AppError::Forbidden(
+                "admin cannot suspend an owner account".into(),
+            ));
+        }
+
+        self.user_repo.set_active(target_id, req.is_active).await
+    }
+
+    async fn admin_reset_password(
+        &self,
+        target_id: &UserId,
+        req:       jiezi_cloud_core::models::user::AdminResetPasswordRequest,
+    ) -> AppResult<()> {
+        // Delegate validation + hashing to the existing change_password method.
+        self.change_password(target_id, &req.new_password).await
+    }
+
+    async fn update_user_quota(
+        &self,
+        target_id: &UserId,
+        req:       jiezi_cloud_core::models::user::SetQuotaRequest,
+    ) -> AppResult<()> {
+        // Ensure user exists.
+        self.user_repo
+            .find_by_id(target_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {target_id} not found")))?;
+
+        self.user_repo.update_quota(target_id, req.storage_quota).await
+    }
+
+    async fn delete_user(&self, target_id: &UserId) -> AppResult<()> {
+        // Guard: do not allow deleting the last Owner.
+        let owner_count = self.user_repo.count_by_role("owner").await?;
+        let target = self
+            .user_repo
+            .find_by_id(target_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("user {target_id} not found")))?;
+
+        if matches!(target.role, jiezi_cloud_core::models::user::Role::Owner)
+            && owner_count <= 1
+        {
+            return Err(AppError::Forbidden(
+                "cannot delete the last owner account".into(),
+            ));
+        }
+
+        // Revoke all refresh tokens so active sessions cannot be replayed.
+        self.token_repo.revoke_all_for_user(target_id).await?;
+
+        self.user_repo.delete(target_id).await
+    }
 }
 
 /// Fetch the current role of a user — used when generating a fresh access

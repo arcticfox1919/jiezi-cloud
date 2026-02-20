@@ -139,6 +139,53 @@ pub struct RegisterRequest {
     pub display_name: Option<String>,
 }
 
+/// Payload for updating one's own profile (display name, avatar).
+///
+/// Each field is doubly-wrapped in `Option` so the client can distinguish
+/// "omit this field" (`None`) from "clear this field" (`Some(None)`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateProfileRequest {
+    /// Pass `Some(Some("Alice"))` to set, `Some(None)` to clear.
+    pub display_name: Option<Option<String>>,
+    /// Pass `Some(Some("https://…"))` to set, `Some(None)` to clear.
+    pub avatar_url:   Option<Option<String>>,
+}
+
+/// Payload for `POST /auth/me/password` — change own password.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeOwnPasswordRequest {
+    /// The caller's current password (verified before accepting the change).
+    pub old_password: String,
+    /// The desired new password (minimum 8 characters).
+    pub new_password: String,
+}
+
+/// Payload for `PATCH /admin/users/{id}/role` — change a user's system role.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeRoleRequest {
+    pub new_role: Role,
+}
+
+/// Payload for `PATCH /admin/users/{id}/status` — suspend or reactivate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetActiveRequest {
+    pub is_active: bool,
+}
+
+/// Payload for `POST /admin/users/{id}/reset-password` — admin force-reset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminResetPasswordRequest {
+    /// The new password to assign.  Minimum 8 characters.
+    pub new_password: String,
+}
+
+/// Payload for `PATCH /admin/users/{id}/quota` — set storage quota.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetQuotaRequest {
+    /// Storage maximum in bytes.  `null` means unlimited.
+    pub storage_quota: Option<u64>,
+}
+
 /// Payload for the user login endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {

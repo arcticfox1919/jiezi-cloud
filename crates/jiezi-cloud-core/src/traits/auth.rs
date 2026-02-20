@@ -3,8 +3,12 @@
 use async_trait::async_trait;
 
 use crate::error::AppResult;
-use crate::models::user::{Claims, LoginRequest, RegisterRequest, SessionInfo, TokenPair, User};
-use crate::types::{Action, ResourceRef, UserId};
+use crate::models::user::{
+    AdminResetPasswordRequest, ChangeOwnPasswordRequest, ChangeRoleRequest,
+    Claims, LoginRequest, RegisterRequest, Role, SessionInfo, SetActiveRequest,
+    SetQuotaRequest, TokenPair, UpdateProfileRequest, User,
+};
+use crate::types::{Action, PageRequest, PageResponse, ResourceRef, UserId};
 
 /// Authentication and authorization service contract.
 ///
@@ -77,6 +81,119 @@ pub trait AuthService: Send + Sync {
     ///
     /// - [`AppError::NotFound`] if no active session with `family` exists for the user.
     async fn revoke_session(&self, user_id: &UserId, family: &str) -> AppResult<()>;
+
+    // ─── User lookup ──────────────────────────────────────────────────────────
+
+    /// Return a single user by ID.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if no user with `user_id` exists.
+    async fn get_user(&self, user_id: &UserId) -> AppResult<User>;
+
+    /// Return a paginated list of all users.
+    ///
+    /// Intended for admin dashboards.  Callers are responsible for asserting
+    /// the necessary role before invoking this method.
+    async fn list_users(&self, page: &PageRequest) -> AppResult<PageResponse<User>>;
+
+    // ─── Self-service ─────────────────────────────────────────────────────────
+
+    /// Update the caller's own profile (display name and / or avatar URL).
+    ///
+    /// Only the fields wrapped in `Some` are written; `None` fields are left
+    /// unchanged.  Pass `Some(None)` to explicitly clear a field.
+    async fn update_profile(
+        &self,
+        user_id: &UserId,
+        req:     UpdateProfileRequest,
+    ) -> AppResult<User>;
+
+    /// Change the caller's own password after verifying the current one.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::Unauthorized`] if `old_password` is incorrect.
+    /// - [`AppError::Validation`] if `new_password` is shorter than 8 chars.
+    async fn change_own_password(
+        &self,
+        user_id: &UserId,
+        req:     ChangeOwnPasswordRequest,
+    ) -> AppResult<()>;
+
+    // ─── Admin operations ─────────────────────────────────────────────────────
+
+    /// Change the system-level role of a user.
+    ///
+    /// Authorization rules (enforced by the implementation):
+    /// - `Owner` may grant any role, including `Admin`.
+    /// - `Admin` may only promote/demote between `Member` and `Guest`.
+    /// - Nobody may change their own role.
+    /// - Nobody may demote another `Owner` unless they are also an `Owner`.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::Forbidden`] if the caller lacks the privilege.
+    /// - [`AppError::NotFound`] if `target_id` does not exist.
+    async fn update_user_role(
+        &self,
+        caller_role: Role,
+        caller_id:   &UserId,
+        target_id:   &UserId,
+        req:         ChangeRoleRequest,
+    ) -> AppResult<User>;
+
+    /// Suspend or reactivate a user account.
+    ///
+    /// A suspended user cannot log in; existing sessions remain valid until
+    /// their tokens expire or are explicitly revoked.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `target_id` does not exist.
+    /// - [`AppError::Forbidden`] if an Admin attempts to suspend an Owner.
+    async fn set_user_active(
+        &self,
+        caller_role: Role,
+        target_id:   &UserId,
+        req:         SetActiveRequest,
+    ) -> AppResult<()>;
+
+    /// Admin-force-reset a user's password without knowing the old one.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `target_id` does not exist.
+    /// - [`AppError::Validation`] if `new_password` is too short.
+    async fn admin_reset_password(
+        &self,
+        target_id: &UserId,
+        req:       AdminResetPasswordRequest,
+    ) -> AppResult<()>;
+
+    /// Set (or remove) the per-user storage quota.
+    ///
+    /// `None` quota means unlimited storage.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `target_id` does not exist.
+    async fn update_user_quota(
+        &self,
+        target_id: &UserId,
+        req:       SetQuotaRequest,
+    ) -> AppResult<()>;
+
+    /// Permanently delete a user account and all associated sessions.
+    ///
+    /// Does **not** cascade to files — callers must handle file cleanup
+    /// separately.  Only `Owner` should be permitted to call this.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `target_id` does not exist.
+    /// - [`AppError::Forbidden`] if attempting to delete the last Owner.
+    async fn delete_user(&self, target_id: &UserId) -> AppResult<()>;
 
     /// Create the initial Owner account during the first-run setup wizard.
     ///
