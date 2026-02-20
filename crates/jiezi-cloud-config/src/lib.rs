@@ -62,6 +62,8 @@ pub struct AppConfig {
     pub tracing:  TracingConfig,
     pub security: SecurityConfig,
     pub email:    EmailConfig,
+    #[serde(default)]
+    pub quic:     QuicConfig,
 }
 
 // ---- Environment ------------------------------------------------------------
@@ -171,13 +173,14 @@ pub struct DatabaseBackupConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {
-    /// HMAC-SHA256 signing secret for JWTs.
+    /// ES256 (ECDSA P-256) private key in PKCS#8 PEM format.
     ///
-    /// **Must be overridden via `JIEZI__AUTH__JWT_SECRET` in production.**
-    /// The default value in `config/default.toml` is intentionally a weak
-    /// placeholder — the server will refuse to start in production mode
-    /// unless this is changed.
-    pub jwt_secret: String,
+    /// Set to the special sentinel `"GENERATE"` to have the server
+    /// auto-generate a fresh ephemeral keypair at startup.  This is
+    /// convenient for development but tokens are **invalidated on every
+    /// restart**.  In production, set this via the
+    /// `JIEZI__AUTH__JWT_PRIVATE_KEY_PEM` environment variable.
+    pub jwt_private_key_pem: String,
 
     /// Access token lifetime in seconds (default: 900 = 15 minutes).
     pub access_token_ttl_seconds: u64,
@@ -206,6 +209,73 @@ pub struct StorageConfig {
 fn default_large_file_threshold() -> u64 {
     20 * 1024 * 1024 // 20 MiB
 }
+
+// ---- QUIC transfer server --------------------------------------------------
+
+/// Configuration for the JTP/1 QUIC file-transfer server.
+///
+/// This server handles large-file uploads and downloads over QUIC (UDP),
+/// typically for files >= `storage.large_file_threshold_bytes`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct QuicConfig {
+    /// Whether the QUIC transfer server is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// UDP bind address (e.g. `"0.0.0.0"`).
+    #[serde(default = "default_quic_listen_addr")]
+    pub listen_addr: String,
+
+    /// UDP port to listen on (default: 4433).
+    #[serde(default = "default_quic_port")]
+    pub port: u16,
+
+    /// Path to a PEM TLS certificate file.
+    /// Set to `"GENERATE"` to auto-generate an ephemeral self-signed cert at
+    /// startup (development only — clients must use fingerprint pinning).
+    #[serde(default = "default_generate")]
+    pub tls_cert_pem: String,
+
+    /// Path to a PEM TLS private key file.
+    /// Set to `"GENERATE"` to match `tls_cert_pem = "GENERATE"`.
+    #[serde(default = "default_generate")]
+    pub tls_key_pem: String,
+
+    /// Maximum number of concurrent bidirectional streams per connection.
+    #[serde(default = "default_quic_max_streams")]
+    pub max_concurrent_bidi_streams: u32,
+
+    /// Idle timeout in seconds before a connection is closed.
+    #[serde(default = "default_quic_idle_timeout")]
+    pub idle_timeout_secs: u64,
+
+    /// Maximum JTP/1 chunk data payload size in bytes (default: 4 MiB).
+    /// Must be <= the FastCDC max chunk size used during upload.
+    #[serde(default = "default_quic_max_chunk_bytes")]
+    pub max_chunk_bytes: u32,
+}
+
+impl Default for QuicConfig {
+    fn default() -> Self {
+        Self {
+            enabled:                    false,
+            listen_addr:               default_quic_listen_addr(),
+            port:                      default_quic_port(),
+            tls_cert_pem:              default_generate(),
+            tls_key_pem:               default_generate(),
+            max_concurrent_bidi_streams: default_quic_max_streams(),
+            idle_timeout_secs:         default_quic_idle_timeout(),
+            max_chunk_bytes:           default_quic_max_chunk_bytes(),
+        }
+    }
+}
+
+fn default_quic_listen_addr()  -> String { "0.0.0.0".to_owned() }
+fn default_quic_port()         -> u16    { 4433 }
+fn default_generate()          -> String { "GENERATE".to_owned() }
+fn default_quic_max_streams()  -> u32    { 128 }
+fn default_quic_idle_timeout() -> u64    { 30 }
+fn default_quic_max_chunk_bytes() -> u32 { 4 * 1024 * 1024 } // 4 MiB
 
 // ---- Tracing ----------------------------------------------------------------
 
@@ -365,21 +435,29 @@ impl AppConfig {
     /// Returns an error string describing the first problem found, or `Ok(())`
     /// if the configuration is safe to use.
     pub fn validate(&self) -> Result<(), String> {
-        const WEAK_SECRET: &str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING";
+        const GENERATE_SENTINEL: &str = "GENERATE";
 
-        if self.environment.is_production() && self.auth.jwt_secret == WEAK_SECRET {
+        // Block the ephemeral-keypair sentinel in production — it would
+        // invalidate all sessions on every restart.
+        if self.environment.is_production()
+            && self.auth.jwt_private_key_pem == GENERATE_SENTINEL
+        {
             return Err(
-                "JIEZI__AUTH__JWT_SECRET must be set to a secret value in production; \
-                 the default placeholder is not safe"
+                "JIEZI__AUTH__JWT_PRIVATE_KEY_PEM must be set to a real PKCS#8 PEM in \
+                 production; the \"GENERATE\" placeholder is not safe"
                     .to_owned(),
             );
         }
 
-        if self.auth.jwt_secret.len() < 32 {
-            return Err(format!(
-                "auth.jwt_secret must be at least 32 characters (got {})",
-                self.auth.jwt_secret.len()
-            ));
+        // In non-production environments, "GENERATE" is allowed (auto-keygen).
+        // Any other value must look like a PEM file.
+        if self.auth.jwt_private_key_pem != GENERATE_SENTINEL
+            && !self.auth.jwt_private_key_pem.contains("-----BEGIN")
+        {
+            return Err(
+                "auth.jwt_private_key_pem must be a PKCS#8 PEM string or \"GENERATE\""
+                    .to_owned(),
+            );
         }
 
         if self.server.port == 0 {
@@ -461,20 +539,20 @@ mod tests {
         assert!(cfg.validate().is_ok());
     }
 
-    // Test 5: validate() rejects weak secret in production mode
+    // Test 5: validate() rejects GENERATE sentinel in production mode
     #[test]
-    fn test_validate_rejects_weak_secret_in_production() {
+    fn test_validate_rejects_generate_in_production() {
         let mut cfg = load_from(test_config_dir()).unwrap();
         cfg.environment = Environment::Production;
-        // The default placeholder secret should be rejected.
+        // "GENERATE" placeholder must be rejected in production.
         assert!(cfg.validate().is_err());
     }
 
-    // Test 6: validate() rejects secrets shorter than 32 characters
+    // Test 6: validate() rejects non-PEM, non-GENERATE values
     #[test]
-    fn test_validate_rejects_short_secret() {
+    fn test_validate_rejects_invalid_pem() {
         let mut cfg = load_from(test_config_dir()).unwrap();
-        cfg.auth.jwt_secret = "tooshort".to_owned();
+        cfg.auth.jwt_private_key_pem = "not-a-pem-and-not-GENERATE".to_owned();
         assert!(cfg.validate().is_err());
     }
 

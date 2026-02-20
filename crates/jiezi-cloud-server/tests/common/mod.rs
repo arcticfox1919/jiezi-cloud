@@ -74,7 +74,7 @@ pub fn test_cfg() -> AppConfig {
         dir              = "./test-tmp/db-backup"
 
         [auth]
-        jwt_secret                = "test-secret-that-is-at-least-32-characters-long"
+        jwt_private_key_pem       = "GENERATE"
         access_token_ttl_seconds  = 900
         refresh_token_ttl_seconds = 2592000
 
@@ -99,6 +99,9 @@ pub fn test_cfg() -> AppConfig {
         from_name             = "Test"
         verification_required = false
         otp_ttl_secs          = 600
+
+        [quic]
+        enabled = false
 
         [tracing]
         level  = "warn"

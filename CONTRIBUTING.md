@@ -54,18 +54,47 @@ docs: update CONTRIBUTING with test convention
 
 ## Testing Standards
 
-### Separate unit tests into `*_tests.rs` files
+### Preferred: `tests/` directory (public API tests)
 
-**Do not** embed `#[cfg(test)] mod tests { … }` blocks inside source files —
-mixed test scaffolding makes the production code harder to read at a glance.
+Place unit tests in the crate's `tests/` directory whenever possible.
+Files in `tests/` are compiled as separate crates and can only access **public
+API** — which is the same guarantee callers have.  If you cannot test a
+behaviour through the public interface, that is a signal to improve the design.
 
-**Rule: unit test code lives in a sibling `<module>_tests.rs` file.**
+**Structure:**
 
-**Source file (`foo.rs`) — one declaration line at the bottom:**
+```
+crates/jiezi-cloud-core/
+└── tests/
+    ├── test_error.rs
+    ├── test_events.rs
+    ├── test_types.rs
+    ├── test_models_chunk.rs
+    ├── test_models_file.rs
+    ├── test_models_share.rs
+    ├── test_models_space.rs
+    ├── test_models_user.rs
+    ├── test_models_task.rs
+    ├── test_models_backend.rs
+    └── test_protocol_codec.rs
+```
+
+Each file imports the crate by its lib name:
 
 ```rust
-// src/foo.rs 末尾
+use jiezi_cloud_core::models::chunk::ChunkInfo;
+```
 
+Add required crates (e.g. `bytes`, `uuid`, `chrono`) to `[dev-dependencies]` in
+the crate's `Cargo.toml`.
+
+### Exception: sibling `*_tests.rs` for private-access tests
+
+When a test **must** access private fields or free functions, use a sibling
+`<module>_tests.rs` file declared at the bottom of the source file:
+
+```rust
+// src/foo.rs — one line at the bottom
 #[cfg(test)]
 #[path = "foo_tests.rs"]
 mod tests;
@@ -74,31 +103,13 @@ mod tests;
 > The `#[path]` attribute is required because `foo.rs` is a flat file, not a
 > directory module.  Without it rustc looks for `foo/tests.rs` and fails.
 
-**Test file (`foo_tests.rs`):**
+This is the **exception**, not the rule.  Prefer designing APIs so tests do not
+need private access.
 
-```rust
-// src/foo_tests.rs
+### Integration / I/O tests
 
-use super::{Foo, BAR_CONST};  // access private/public items via super::
-
-#[test]
-fn smoke() {
-    let f = Foo::new("hello");
-    assert_eq!(f.value(), "hello");
-}
-```
-
-**Existing example:**
-
-| Source file | Test file |
-|-------------|-----------|
-| `crates/jiezi-cloud-core/src/models/backend.rs` | `crates/jiezi-cloud-core/src/models/backend_tests.rs` |
-
-### Integration tests
-
-Tests that span multiple modules or require real I/O go in the crate's `tests/`
-directory (standard Cargo integration test location).  Name files after the
-feature under test:
+Tests that span multiple modules or require real I/O also go in `tests/`.
+Name files after the feature under test:
 
 ```
 crates/jiezi-cloud-storage/

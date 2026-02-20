@@ -34,3 +34,6 @@ config/local.toml
 
 # Temporary files
 build_output.txt
+
+# Local Copilot instructions (personal, not shared with the team)
+.github/copilot-instructions.md

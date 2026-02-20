@@ -18,6 +18,7 @@
 pub mod entities;
 pub mod error;
 pub mod middleware;
+pub mod quic;
 pub mod repository;
 pub mod routes;
 pub mod state;
@@ -28,7 +29,7 @@ use std::time::Duration;
 use sea_orm::DatabaseConnection;
 
 use jiezi_cloud_auth::{
-    EmailService, EmailOtpRepository,
+    EmailService, EmailOtpRepository, JwtManager,
     repository::{RefreshTokenRepository, UserRepository},
     AuthServiceImpl,
 };
@@ -61,12 +62,33 @@ pub async fn build_app_state(
     let access_ttl  = Duration::from_secs(cfg.auth.access_token_ttl_seconds);
     let refresh_ttl = Duration::from_secs(cfg.auth.refresh_token_ttl_seconds);
 
+    // ── JWT keypair ───────────────────────────────────────────────────────────
+    //
+    // ES256 (ECDSA P-256): home server holds the private key and can sign;
+    // the tunnel receives only the public key via RegisterNode and can verify
+    // but never forge tokens.
+    let jwt_manager = Arc::new(if cfg.auth.jwt_private_key_pem == "GENERATE" {
+        tracing::warn!(
+            "jwt_private_key_pem = \"GENERATE\": using ephemeral ES256 keypair. \
+             All tokens are invalidated on restart. \
+             Set JIEZI__AUTH__JWT_PRIVATE_KEY_PEM for a persistent key."
+        );
+        JwtManager::generate(access_ttl, refresh_ttl)
+            .expect("ES256 keypair generation must succeed")
+    } else {
+        JwtManager::from_pkcs8_pem(&cfg.auth.jwt_private_key_pem, access_ttl, refresh_ttl)
+            .expect("jwt_private_key_pem: invalid PKCS#8 PEM — check JIEZI__AUTH__JWT_PRIVATE_KEY_PEM")
+    });
+    tracing::info!(
+        public_key_pem = %jwt_manager.public_key_pem(),
+        "ES256 JWT public key (include in RegisterNode message when connecting to tunnel)"
+    );
+
     let auth_service = {
         let base = AuthServiceImpl::new(
             UserRepository::new(db.clone()),
             RefreshTokenRepository::new(db.clone()),
-            &cfg.auth.jwt_secret,
-            access_ttl,
+            jwt_manager.clone(),
             refresh_ttl,
         )
         .with_security(
@@ -150,6 +172,7 @@ pub async fn build_app_state(
     state::AppState {
         db,
         auth: auth_service,
+        jwt: jwt_manager,
         vfs: vfs_service,
         storage,
         upload,

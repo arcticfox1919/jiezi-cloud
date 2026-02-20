@@ -91,7 +91,23 @@ jsonwebtoken   = "9"
 rand           = "0.9"
 sha2           = "0.10"
 hex            = "0.4"
+# ES256 (ECDSA P-256) key generation & serialisation.
+# Used by JwtManager to produce a dev keypair when jwt_private_key_pem = "GENERATE".
+p256           = { version = "0.13", features = ["pkcs8", "pem"] }
 
+# ── QUIC transport ───────────────────────────────────────────────────────────
+# quinn: QUIC protocol implementation built on rustls + tokio.
+# rcgen: generates self-signed TLS certificates for dev environments.
+# rustls: directly used by quic/tls.rs for pki_types.
+# rustls-pemfile: PEM certificate / key parsing for production TLS setup.
+quinn          = { version = "0.11", features = [] }
+rcgen          = "0.13"
+rustls         = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = "2"
+
+# ── Concurrent map ────────────────────────────────────────────────────────────
+# dashmap: lock-striped concurrent HashMap used by the QUIC session manager.
+dashmap        = "6"
 # ── Content-Defined Chunking ──────────────────────────────────────────────────
 fastcdc        = "3"
 

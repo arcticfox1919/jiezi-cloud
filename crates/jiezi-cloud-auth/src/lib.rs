@@ -27,5 +27,6 @@ pub mod service;
 // ─── Public re-exports ────────────────────────────────────────────────────────
 
 pub use email::EmailService;
+pub use jwt::{JwtManager, JwtVerifier};
 pub use repository::EmailOtpRepository;
 pub use service::AuthServiceImpl;

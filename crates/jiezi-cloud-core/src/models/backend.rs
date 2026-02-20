@@ -335,13 +335,3 @@ impl Default for ReplicationPolicy {
 // Tests live in a separate `backend_tests.rs` file so this source file stays
 // readable without test scaffolding mixed in.
 //
-// Pattern:
-//   #[cfg(test)] mod tests;          ← this declaration (below)
-//   src/models/backend_tests.rs      ← the actual test code
-//
-// The `#[path]` attribute is required because `backend.rs` is a flat file
-// (not a directory module).  Without it rustc would look for `backend/tests.rs`.
-
-#[cfg(test)]
-#[path = "backend_tests.rs"]
-mod tests;

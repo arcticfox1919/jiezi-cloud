@@ -9,6 +9,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use sea_orm::DatabaseConnection;
 
+use jiezi_cloud_auth::JwtManager;
 use jiezi_cloud_core::traits::{auth::AuthService, vfs::VfsService};
 use jiezi_cloud_storage::{DownloadService, StorageManager, UploadService};
 
@@ -21,6 +22,8 @@ pub struct AppState {
     pub db: DatabaseConnection,
     /// Authentication and authorization service.
     pub auth: Arc<dyn AuthService>,
+    /// ES256 JWT manager — used by the QUIC server to validate bearer tokens.
+    pub jwt: Arc<JwtManager>,
     /// Virtual file system service.
     pub vfs: Arc<dyn VfsService>,
     /// Multi-backend storage manager (reads + backend health).

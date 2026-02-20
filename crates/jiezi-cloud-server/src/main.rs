@@ -157,7 +157,27 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = build_app_state(db, &cfg, setup_done).await;
 
-    // ── Step 8a: Build per-IP rate limiter for authentication routes ──────────
+    // ── Step 8a: Start QUIC file-transfer server ──────────────────────────────
+    if cfg.quic.enabled {
+        let quic_state = app_state.clone();
+        let quic_cfg   = cfg.quic.clone();
+        match jiezi_cloud_server::quic::QuicServer::new(&quic_cfg, quic_state).await {
+            Ok(quic_server) => {
+                match quic_server.local_addr() {
+                    Ok(addr) => info!(bind = %addr, "QUIC file-transfer server started (JTP/1)"),
+                    Err(_)   => info!("QUIC file-transfer server started (JTP/1)"),
+                }
+                tokio::spawn(async move { quic_server.run().await });
+            }
+            Err(e) => {
+                error!(error = %e, "Failed to start QUIC server — continuing without it");
+            }
+        }
+    } else {
+        info!("QUIC file-transfer server disabled in config");
+    }
+
+    // ── Step 8b: Build per-IP rate limiter for authentication routes ──────────
     // Uses a token-bucket algorithm: each IP may send at most
     // `auth_rate_limit_per_minute` requests per minute to `/api/v1/auth/**`.
     // On burst the client gets a 429 Too Many Requests with a Retry-After

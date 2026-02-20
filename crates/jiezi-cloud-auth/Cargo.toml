@@ -19,6 +19,7 @@ async-trait.workspace      = true
 argon2.workspace           = true
 chrono.workspace           = true
 jsonwebtoken.workspace      = true
+p256.workspace             = true
 rand.workspace             = true
 rand_core  = { version = "0.6", features = ["getrandom"] }
 serde.workspace            = true

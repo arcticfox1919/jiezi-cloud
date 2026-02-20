@@ -70,19 +70,19 @@ pub struct AuthServiceImpl {
 impl AuthServiceImpl {
     /// Construct a new service instance.
     ///
-    /// `jwt_secret` is the HMAC-SHA256 signing key.  `access_ttl` and
-    /// `refresh_ttl` control how long each token type remains valid.
+    /// `jwt` is a pre-constructed [`JwtManager`] (ES256 private key already
+    /// loaded).  `refresh_ttl` controls how long refresh tokens remain valid;
+    /// the access-token TTL is embedded in the `JwtManager`.
     pub fn new(
         user_repo:   UserRepository,
         token_repo:  RefreshTokenRepository,
-        jwt_secret:  &str,
-        access_ttl:  Duration,
+        jwt:         Arc<JwtManager>,
         refresh_ttl: Duration,
     ) -> Self {
         Self {
             user_repo,
             token_repo,
-            jwt: Arc::new(JwtManager::new(jwt_secret, access_ttl, refresh_ttl)),
+            jwt,
             refresh_ttl,
             max_login_attempts:    5,
             lockout_duration_secs: 900,

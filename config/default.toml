@@ -28,9 +28,13 @@ connect_timeout_seconds = 30
 
 # ── Authentication ────────────────────────────────────────────────────────────
 [auth]
-# WARNING: change this via JIEZI__AUTH__JWT_SECRET in production.
-# The server will refuse to start if this placeholder is used in production.
-jwt_secret                = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
+# ES256 (ECDSA P-256) private key in PKCS#8 PEM format.
+# "GENERATE" = auto-generate a fresh ephemeral keypair at startup (dev only).
+#   - Convenient for local development; tokens are invalidated on every restart.
+#   - The server logs the derived public key at INFO level on startup.
+# Production: set JIEZI__AUTH__JWT_PRIVATE_KEY_PEM to a real PKCS#8 PEM value.
+#   Generate once: openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256
+jwt_private_key_pem       = "GENERATE"
 access_token_ttl_seconds  = 900       # 15 minutes
 refresh_token_ttl_seconds = 2592000   # 30 days
 
@@ -93,3 +97,33 @@ verification_required = false
 
 # How long each OTP remains valid (seconds).  600 = 10 minutes.
 otp_ttl_secs         = 600
+
+# ── QUIC file-transfer server (JTP/1) ─────────────────────────────────────────
+[quic]
+# Set to true to enable the QUIC transfer server on the port below.
+# Files >= storage.large_file_threshold_bytes are routed here by the client.
+enabled           = false
+
+listen_addr       = "0.0.0.0"
+port              = 4433           # UDP; expose this port if behind a firewall
+
+# TLS certificate and private key.
+# "GENERATE" = auto-generate an ephemeral self-signed cert at startup.
+#   - Dev-friendly; the cert fingerprint is logged at INFO level for client pinning.
+#   - Sessions are NOT invalidated on restart (unlike jwt_private_key_pem).
+# Production: set both to the absolute path of your PEM files, e.g.
+#   tls_cert_pem = "/etc/ssl/jiezi-cloud/cert.pem"
+#   tls_key_pem  = "/etc/ssl/jiezi-cloud/key.pem"
+tls_cert_pem      = "GENERATE"
+tls_key_pem       = "GENERATE"
+
+# Maximum concurrent bidirectional streams per QUIC connection.
+# Each in-flight upload chunk uses one bidi stream; tune to client concurrency.
+max_concurrent_bidi_streams = 128
+
+# Idle timeout before a connection is dropped (seconds).
+idle_timeout_secs = 30
+
+# Maximum JTP/1 CHUNK_DATA payload per frame (bytes).  Should match the upper
+# bound of the FastCDC chunk size used during upload (default: 4 MiB).
+max_chunk_bytes   = 4194304        # 4 MiB

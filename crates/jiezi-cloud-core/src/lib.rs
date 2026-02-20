@@ -24,6 +24,7 @@
 pub mod error;
 pub mod events;
 pub mod models;
+pub mod protocol;
 pub mod traits;
 pub mod types;
 
