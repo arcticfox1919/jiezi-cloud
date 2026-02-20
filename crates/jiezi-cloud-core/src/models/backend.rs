@@ -226,6 +226,25 @@ impl BackendDriver {
 /// parameters are stored as a flat JSON object in `backend_type_json`, so new
 /// driver types require no schema migration.
 ///
+/// # Design note
+///
+/// There is no concept of a "required" or "default" backend.  A user may
+/// configure any combination of S3, WebDAV, or other third-party backends
+/// (including zero local-filesystem backends).  The system is designed to
+/// operate entirely on third-party cloud storage.
+///
+/// # TODO
+///
+/// - `TODO(backend-repository)`: implement a SeaORM `BackendConfigEntity` and
+///   a `BackendConfigRepository` with at minimum:
+///   - `list_by_owner(user_id) -> Vec<BackendConfig>`
+///   - `get(id) -> Option<BackendConfig>`
+///   - `create(owner_id, display_name, driver) -> BackendConfig`
+///   - `update(id, patch) -> BackendConfig`
+///   - `delete(id)`
+/// - `TODO(backend-api)`: REST/gRPC handlers so clients can list and manage
+///   their configured backup backends.
+///
 /// Note: `PartialEq` but not `Eq` because [`BackendDriver`] contains a
 /// `serde_json::Map` which does not implement `Eq`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -263,7 +282,7 @@ pub struct BackendConfig {
 
 /// Describes how many / which backends a file upload should be written to.
 ///
-/// Evaluated by `StorageManager` at upload time:
+/// Evaluated by `StorageManager::put_with_policy` at upload time:
 ///
 /// ```text
 /// ReplicationPolicy::All          → write to every enabled backend
@@ -271,6 +290,15 @@ pub struct BackendConfig {
 ///                                   (ordered by priority, first N selected)
 /// ReplicationPolicy::Specific(…)  → write only to the named backend IDs
 /// ```
+///
+/// Because local storage is optional, `MinN{n: 1}` is the minimum sensible
+/// policy for a cloud-only deployment — it writes to whichever single
+/// highest-priority backend is configured.
+///
+/// # TODO
+///
+/// - `TODO(put-with-policy)`: `StorageManager::put_with_policy` in
+///   `jiezi-cloud-storage` is not yet implemented; see that crate's TODO list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "policy")]
 pub enum ReplicationPolicy {

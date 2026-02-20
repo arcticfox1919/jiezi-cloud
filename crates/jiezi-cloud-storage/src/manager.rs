@@ -3,6 +3,13 @@
 //! [`StorageManager`] holds a collection of [`StorageBackend`] implementations
 //! and provides a facade that orchestrates reads and writes across them.
 //!
+//! # Design note
+//!
+//! No backend type is "primary".  The priority ordering is simply used to
+//! determine which backend to read from first in [`get_from_any`].  A
+//! deployment with only S3 backends, only WebDAV backends, or any mix is
+//! fully supported — local filesystem storage is never assumed.
+//!
 //! # Write strategies
 //!
 //! | Method | Behaviour |
@@ -284,6 +291,18 @@ impl StorageManager {
             AppError::NotFound(format!("chunk not found on any backend: {key}"))
         }))
     }
+
+    // ── TODO: ReplicationPolicy execution ──────────────────────────────────────
+    //
+    // TODO(put-with-policy): add `pub async fn put_with_policy(&self, key: &str,
+    //   data: Bytes, policy: &ReplicationPolicy) -> Vec<(BackendId, AppResult<()>)>`
+    // that selects target backends according to the policy:
+    //   - ReplicationPolicy::All      → delegates to `put_to_all`
+    //   - ReplicationPolicy::MinN{n}  → selects first N enabled backends by priority
+    //   - ReplicationPolicy::Specific → delegates to `put_to`
+    // This is the entry point the upload service should call.
+    //
+    // Note: `ReplicationPolicy` is defined in `jiezi_cloud_core::models::backend`.
 
     // ── Health checks ─────────────────────────────────────────────────────────
 
