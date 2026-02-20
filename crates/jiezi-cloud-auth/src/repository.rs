@@ -193,6 +193,42 @@ impl UserRepository {
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    /// Overwrite the password hash for a user.
+    ///
+    /// Used by the first-run setup wizard (`POST /setup/complete`) and future
+    /// admin-triggered password-reset flows.  Does NOT require the old password.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `id` does not match any user.
+    pub async fn update_password(&self, id: &UserId, new_hash: &str) -> AppResult<()> {
+        let result = users::Entity::update_many()
+            .col_expr(users::Column::PasswordHash, Expr::value(new_hash))
+            .col_expr(users::Column::UpdatedAt, Expr::value(Utc::now()))
+            .filter(users::Column::Id.eq(id.to_string()))
+            .exec(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if result.rows_affected == 0 {
+            Err(AppError::NotFound(format!("user {id} not found")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Count the number of users with a specific `role` string.
+    ///
+    /// The setup wizard calls this to detect whether an Owner account already
+    /// exists before attempting to create one.
+    pub async fn count_by_role(&self, role: &str) -> AppResult<u64> {
+        use sea_orm::PaginatorTrait;
+        users::Entity::find()
+            .filter(users::Column::Role.eq(role))
+            .count(&self.db)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))
+    }
 }
 
 // ------ RefreshTokenRepository ------------------------------------------------------------------------------------------------------

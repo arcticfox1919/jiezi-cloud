@@ -78,6 +78,31 @@ pub trait AuthService: Send + Sync {
     /// - [`AppError::NotFound`] if no active session with `family` exists for the user.
     async fn revoke_session(&self, user_id: &UserId, family: &str) -> AppResult<()>;
 
+    /// Create the initial Owner account during the first-run setup wizard.
+    ///
+    /// Fails with [`AppError::Conflict`] if an Owner account already exists,
+    /// preventing accidental re-initialisation after setup is complete.
+    ///
+    /// The owner is granted `Role::Owner` and `is_active = true`.
+    async fn bootstrap_owner(
+        &self,
+        username: String,
+        email: String,
+        password: String,
+        display_name: Option<String>,
+    ) -> AppResult<User>;
+
+    /// Change the password for a user by ID.
+    ///
+    /// This is a force-change (no old-password verification) intended for the
+    /// setup wizard and future admin-reset flows.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `user_id` does not exist.
+    /// - [`AppError::Validation`] if `new_password` is too short (< 8 chars).
+    async fn change_password(&self, user_id: &UserId, new_password: &str) -> AppResult<()>;
+
     /// Check whether a user is authorised to perform an action on a resource.
     ///
     /// Returns `Ok(true)` if the action is permitted, `Ok(false)` otherwise.

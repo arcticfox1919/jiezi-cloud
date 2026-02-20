@@ -28,6 +28,7 @@ pub mod m20260220_000005_create_file_node_paths;
 pub mod m20260220_000006_create_storage_backend_configs;
 pub mod m20260220_000007_create_chunk_locations;
 pub mod m20260220_000008_create_file_chunks;
+pub mod m20260220_000009_create_system_settings;
 
 use sea_orm_migration::prelude::*;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260220_000006_create_storage_backend_configs::Migration),
             Box::new(m20260220_000007_create_chunk_locations::Migration),
             Box::new(m20260220_000008_create_file_chunks::Migration),
+            Box::new(m20260220_000009_create_system_settings::Migration),
         ]
     }
 }

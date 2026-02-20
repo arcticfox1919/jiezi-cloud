@@ -261,6 +261,62 @@ impl AuthService for AuthServiceImpl {
         self.token_repo.revoke_family(family).await
     }
 
+    async fn bootstrap_owner(
+        &self,
+        username: String,
+        email: String,
+        password: String,
+        display_name: Option<String>,
+    ) -> AppResult<User> {
+        // Guard: fail if any owner account already exists.
+        let owner_count = self.user_repo.count_by_role("owner").await?;
+        if owner_count > 0 {
+            return Err(AppError::Conflict(
+                "setup already completed; an owner account exists".into(),
+            ));
+        }
+
+        // Re-use the same password / username validation used by register().
+        validate_register(&RegisterRequest {
+            username:     username.clone(),
+            email:        email.clone(),
+            password:     password.clone(),
+            display_name: display_name.clone(),
+        })?;
+
+        let password_hash = PasswordService::hash(&password)?;
+        let now = Utc::now();
+
+        let owner = User {
+            id:            UserId::new(),
+            username,
+            email,
+            password_hash,
+            role:          jiezi_cloud_core::models::user::Role::Owner,
+            is_active:     true,
+            display_name,
+            avatar_url:    None,
+            storage_quota: None,
+            storage_used:  0,
+            created_at:    now,
+            updated_at:    now,
+        };
+
+        self.user_repo.create(&owner).await?;
+        tracing::info!(user_id = %owner.id, "owner account created during first-run setup");
+        Ok(owner)
+    }
+
+    async fn change_password(&self, user_id: &UserId, new_password: &str) -> AppResult<()> {
+        if new_password.len() < 8 {
+            return Err(AppError::Validation(
+                "password must be at least 8 characters long".into(),
+            ));
+        }
+        let new_hash = PasswordService::hash(new_password)?;
+        self.user_repo.update_password(user_id, &new_hash).await
+    }
+
     async fn check_permission(
         &self,
         user_id: &UserId,
