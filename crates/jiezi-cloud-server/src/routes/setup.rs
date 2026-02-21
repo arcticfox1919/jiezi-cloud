@@ -39,7 +39,7 @@ use crate::{error::ApiError, state::AppState};
 // --- Request / response types ------------------------------------------------
 
 /// Response body for `GET /setup/status`.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SetupStatusResponse {
     /// When `true` the server requires setup before it can be used.
     pub setup_required: bool,
@@ -51,7 +51,7 @@ pub struct SetupStatusResponse {
 ///
 /// All fields are validated server-side.  Passwords are never stored in plain
 /// text; they are hashed with Argon2id before persistence.
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct SetupCompleteRequest {
     // ---- Owner account ---------------------------------------------------------
     /// Login username for the super-admin account (3-50 chars, alphanumeric/-/_).
@@ -83,7 +83,7 @@ fn default_max_upload_mb() -> u32 {
 }
 
 /// Response body for a successful `POST /setup/complete`.
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct SetupCompleteResponse {
     pub success: bool,
     pub message: &'static str,
@@ -102,6 +102,14 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 ///
 /// Returns whether the server still needs to be configured.
 /// Safe to call anonymously; returns no sensitive information.
+#[utoipa::path(
+    get,
+    path = "/api/v1/setup/status",
+    responses(
+        (status = 200, description = "Setup status", body = SetupStatusResponse),
+    ),
+    tag = "setup"
+)]
 pub async fn status(state: web::Data<AppState>) -> HttpResponse {
     let setup_required = !state.setup_completed.load(Ordering::Relaxed);
     HttpResponse::Ok().json(SetupStatusResponse {
@@ -119,6 +127,16 @@ pub async fn status(state: web::Data<AppState>) -> HttpResponse {
 /// 4. Marks setup as complete (DB + in-memory atomic flag).
 ///
 /// Returns `409 Conflict` if setup has already been completed.
+#[utoipa::path(
+    post,
+    path = "/api/v1/setup/complete",
+    request_body = SetupCompleteRequest,
+    responses(
+        (status = 200, description = "Setup completed successfully", body = SetupCompleteResponse),
+        (status = 409, description = "Setup has already been completed"),
+    ),
+    tag = "setup"
+)]
 pub async fn complete(
     state: web::Data<AppState>,
     body: web::Json<SetupCompleteRequest>,

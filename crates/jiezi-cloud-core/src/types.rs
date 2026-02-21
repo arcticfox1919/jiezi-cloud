@@ -23,7 +23,8 @@ macro_rules! newtype_uuid_id {
         $name:ident
     ) => {
         $(#[$attr])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, utoipa::ToSchema)]
+        #[schema(value_type = String, format = Uuid)]
         pub struct $name(pub Uuid);
 
         impl $name {
@@ -104,7 +105,8 @@ newtype_uuid_id!(
 /// Identifier for a physical storage backend (human-readable slug).
 ///
 /// Example: `"primary-disk"`, `"s3-backup"`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(value_type = String)]
 pub struct BackendId(pub String);
 
 impl BackendId {
@@ -141,7 +143,7 @@ impl From<&str> for BackendId {
 // ─── Health status ────────────────────────────────────────────────────────────
 
 /// Health status reported by subsystems such as storage backends and the DB pool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum HealthStatus {
     /// The subsystem is operating normally.
@@ -168,7 +170,7 @@ impl HealthStatus {
 // ─── Pagination ───────────────────────────────────────────────────────────────
 
 /// Pagination parameters sent by the client in query strings or request bodies.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PageRequest {
     /// 1-based page number.
     pub page: u32,
@@ -202,7 +204,7 @@ impl Default for PageRequest {
 }
 
 /// A page of results returned from a listing operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PageResponse<T> {
     /// Items on this page.
     pub items: Vec<T>,

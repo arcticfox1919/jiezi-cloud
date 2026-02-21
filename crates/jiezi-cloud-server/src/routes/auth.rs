@@ -28,8 +28,8 @@ use serde::Deserialize;
 use jiezi_cloud_core::error::AppError;
 use jiezi_cloud_core::models::user::{
     ChangeOwnPasswordRequest, LoginRequest, RegisterRequest,
-    ResetPasswordWithOtpRequest, SendOtpRequest, UnlockWithOtpRequest,
-    UpdateProfileRequest,
+    ResetPasswordWithOtpRequest, SendOtpRequest, SessionInfo, TokenPair, UnlockWithOtpRequest,
+    UpdateProfileRequest, User,
 };
 use jiezi_cloud_core::types::UserId;
 
@@ -62,21 +62,32 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
 // ─── Request / response helpers ───────────────────────────────────────────────
 
-#[derive(Deserialize)]
-struct RefreshBody {
-    refresh_token: String,
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct RefreshBody {
+    pub refresh_token: String,
 }
 
-#[derive(Deserialize)]
-struct LogoutBody {
-    refresh_token: String,
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct LogoutBody {
+    pub refresh_token: String,
 }
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 /// `POST /auth/register` — create a new account.
 ///
 /// Returns `201 Created` with the [`User`] object on success.
-async fn register(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/register",
+    request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "User registered successfully", body = User),
+        (status = 400, description = "Validation error"),
+        (status = 409, description = "Username or email already taken"),
+    ),
+    tag = "auth"
+)]
+pub async fn register(
     state: web::Data<AppState>,
     body: web::Json<RegisterRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -87,7 +98,18 @@ async fn register(
 /// `POST /auth/login` — authenticate with credentials.
 ///
 /// Returns `200 OK` with a [`TokenPair`] on success.
-async fn login(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = TokenPair),
+        (status = 401, description = "Invalid credentials"),
+        (status = 423, description = "Account locked"),
+    ),
+    tag = "auth"
+)]
+pub async fn login(
     state: web::Data<AppState>,
     body: web::Json<LoginRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -96,7 +118,17 @@ async fn login(
 }
 
 /// `POST /auth/refresh` — exchange a refresh token for a new pair (rotation).
-async fn refresh(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/refresh",
+    request_body = RefreshBody,
+    responses(
+        (status = 200, description = "Token refreshed", body = TokenPair),
+        (status = 401, description = "Invalid or expired refresh token"),
+    ),
+    tag = "auth"
+)]
+pub async fn refresh(
     state: web::Data<AppState>,
     body: web::Json<RefreshBody>,
 ) -> Result<HttpResponse, ApiError> {
@@ -105,7 +137,17 @@ async fn refresh(
 }
 
 /// `GET /auth/me` — return the current user's full profile.
-async fn me(
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/me",
+    responses(
+        (status = 200, description = "Current user profile", body = User),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn me(
     state: web::Data<AppState>,
     auth:  AuthUser,
 ) -> Result<HttpResponse, ApiError> {
@@ -118,7 +160,18 @@ async fn me(
 ///
 /// Only the fields present in the request body are updated.  Omit a field
 /// entirely to leave it unchanged; set it to `null` to clear it.
-async fn update_me(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/auth/me",
+    request_body = UpdateProfileRequest,
+    responses(
+        (status = 200, description = "Profile updated", body = User),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn update_me(
     state: web::Data<AppState>,
     auth:  AuthUser,
     body:  web::Json<UpdateProfileRequest>,
@@ -136,7 +189,18 @@ async fn update_me(
 ///
 /// Requires the caller to supply their **current** password in `old_password`.
 /// For admin-initiated forced resets see `POST /admin/users/{id}/reset-password`.
-async fn change_password(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/me/password",
+    request_body = ChangeOwnPasswordRequest,
+    responses(
+        (status = 204, description = "Password changed"),
+        (status = 401, description = "Unauthorized or wrong current password"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn change_password(
     state: web::Data<AppState>,
     auth:  AuthUser,
     body:  web::Json<ChangeOwnPasswordRequest>,
@@ -153,7 +217,17 @@ async fn change_password(
 /// `POST /auth/me/send-change-password-otp` — send OTP to own email before changing password.
 ///
 /// No-op (204) when email verification is disabled in config.
-async fn send_change_password_otp(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/me/send-change-password-otp",
+    responses(
+        (status = 204, description = "OTP sent (or no-op if email verification is disabled)"),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn send_change_password_otp(
     state: web::Data<AppState>,
     auth:  AuthUser,
 ) -> Result<HttpResponse, ApiError> {
@@ -167,7 +241,16 @@ async fn send_change_password_otp(
 }
 
 /// `POST /auth/logout` — revoke a refresh token (log out a device).
-async fn logout(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    request_body = LogoutBody,
+    responses(
+        (status = 204, description = "Logged out"),
+    ),
+    tag = "auth"
+)]
+pub async fn logout(
     state: web::Data<AppState>,
     body: web::Json<LogoutBody>,
 ) -> Result<HttpResponse, ApiError> {
@@ -176,7 +259,17 @@ async fn logout(
 }
 
 /// `GET /auth/sessions` — list all active sessions for the current user.
-async fn list_sessions(
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/sessions",
+    responses(
+        (status = 200, description = "Active sessions", body = Vec<SessionInfo>),
+        (status = 401, description = "Unauthorized"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn list_sessions(
     state: web::Data<AppState>,
     auth: AuthUser,
 ) -> Result<HttpResponse, ApiError> {
@@ -186,7 +279,21 @@ async fn list_sessions(
 }
 
 /// `DELETE /auth/sessions/{family}` — revoke a single device session.
-async fn revoke_session(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/auth/sessions/{family}",
+    params(
+        ("family" = String, Path, description = "Session family UUID to revoke")
+    ),
+    responses(
+        (status = 204, description = "Session revoked"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Session not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth"
+)]
+pub async fn revoke_session(
     state: web::Data<AppState>,
     auth: AuthUser,
     path: web::Path<String>,
@@ -213,7 +320,16 @@ fn parse_user_id(sub: &str) -> Result<UserId, ApiError> {
 ///
 /// The client should call this before `POST /auth/register` when
 /// `email.verification_required = true`.  Returns `204 No Content`.
-async fn send_register_otp(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/send-register-otp",
+    request_body = SendOtpRequest,
+    responses(
+        (status = 204, description = "OTP sent"),
+    ),
+    tag = "auth"
+)]
+pub async fn send_register_otp(
     state: web::Data<AppState>,
     body:  web::Json<SendOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -225,7 +341,16 @@ async fn send_register_otp(
 ///
 /// Always returns `204 No Content` (even if the email is not registered)
 /// to prevent email enumeration.
-async fn forgot_password(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/forgot-password",
+    request_body = SendOtpRequest,
+    responses(
+        (status = 204, description = "Password reset OTP sent (always 204 to prevent email enumeration)"),
+    ),
+    tag = "auth"
+)]
+pub async fn forgot_password(
     state: web::Data<AppState>,
     body:  web::Json<SendOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -236,7 +361,17 @@ async fn forgot_password(
 /// `POST /auth/reset-password` — set a new password using the OTP.
 ///
 /// Returns `204 No Content` on success.
-async fn reset_password(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/reset-password",
+    request_body = ResetPasswordWithOtpRequest,
+    responses(
+        (status = 204, description = "Password reset successful"),
+        (status = 400, description = "Invalid OTP or expired"),
+    ),
+    tag = "auth"
+)]
+pub async fn reset_password(
     state: web::Data<AppState>,
     body:  web::Json<ResetPasswordWithOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -247,7 +382,16 @@ async fn reset_password(
 /// `POST /auth/send-unlock-otp` — email an unlock OTP for a locked account.
 ///
 /// Returns `204 No Content` always (prevents enumeration).
-async fn send_unlock_otp(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/send-unlock-otp",
+    request_body = SendOtpRequest,
+    responses(
+        (status = 204, description = "Unlock OTP sent (always 204 to prevent enumeration)"),
+    ),
+    tag = "auth"
+)]
+pub async fn send_unlock_otp(
     state: web::Data<AppState>,
     body:  web::Json<SendOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {
@@ -258,7 +402,17 @@ async fn send_unlock_otp(
 /// `POST /auth/unlock-account` — clear the lockout using the OTP.
 ///
 /// Returns `204 No Content` on success.
-async fn unlock_account(
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/unlock-account",
+    request_body = UnlockWithOtpRequest,
+    responses(
+        (status = 204, description = "Account unlocked"),
+        (status = 400, description = "Invalid OTP or expired"),
+    ),
+    tag = "auth"
+)]
+pub async fn unlock_account(
     state: web::Data<AppState>,
     body:  web::Json<UnlockWithOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {

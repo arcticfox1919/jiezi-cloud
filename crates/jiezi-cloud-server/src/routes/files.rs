@@ -40,6 +40,7 @@ use serde::Deserialize;
 
 use jiezi_cloud_core::error::AppError;
 use jiezi_cloud_core::models::backend::ReplicationPolicy;
+use jiezi_cloud_core::models::file::FileNode;
 use jiezi_cloud_core::types::{FileId, PageRequest, UserId};
 
 use crate::error::ApiError;
@@ -77,48 +78,59 @@ pub fn configure_download(cfg: &mut web::ServiceConfig) {
 // ─── Request bodies ───────────────────────────────────────────────────────────
 
 /// Body for `POST /files/directory`.
-#[derive(Deserialize)]
-struct CreateDirectoryBody {
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct CreateDirectoryBody {
     /// ID of the parent directory.
-    parent_id: String,
+    pub parent_id: String,
     /// Name of the new directory.
-    name: String,
+    pub name: String,
 }
 
 /// Body for `PUT /files/{id}/name`.
-#[derive(Deserialize)]
-struct RenameBody {
-    new_name: String,
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct RenameBody {
+    pub new_name: String,
 }
 
 /// Body for `POST /files/{id}/move`.
-#[derive(Deserialize)]
-struct MoveBody {
-    new_parent_id: String,
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct MoveBody {
+    pub new_parent_id: String,
 }
 
 /// Body for `POST /files/{id}/copy`.
-#[derive(Deserialize)]
-struct CopyBody {
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct CopyBody {
     /// ID of the destination parent directory.
-    new_parent_id: String,
+    pub new_parent_id: String,
 }
 
 /// Query parameters for `POST /api/v1/upload/`.
-#[derive(Deserialize)]
-struct UploadQuery {
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct UploadQuery {
     /// ID of the parent directory in the VFS.
-    parent_id: String,
+    pub parent_id: String,
     /// Filename to store.
-    name: String,
+    pub name: String,
     /// Optional MIME type hint from the client.
-    mime_type: Option<String>,
+    pub mime_type: Option<String>,
 }
 
 // ─── VFS metadata handlers ────────────────────────────────────────────────────
 
 /// `GET /files/{id}` — fetch a single node.
-async fn get_node(
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}",
+    params(("id" = String, Path, description = "File/directory node ID")),
+    responses(
+        (status = 200, description = "Node metadata", body = FileNode),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn get_node(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -129,7 +141,22 @@ async fn get_node(
 }
 
 /// `GET /files/{id}/children?page=1&per_page=20` — list a directory's contents.
-async fn list_children(
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/{id}/children",
+    params(
+        ("id" = String, Path, description = "Directory node ID"),
+        ("page" = Option<u32>, Query, description = "Page number (1-based)"),
+        ("per_page" = Option<u32>, Query, description = "Items per page"),
+    ),
+    responses(
+        (status = 200, description = "Directory listing", body = Vec<FileNode>),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn list_children(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -142,7 +169,19 @@ async fn list_children(
 }
 
 /// `POST /files/directory` — create a new subdirectory.
-async fn create_directory(
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/directory",
+    request_body = CreateDirectoryBody,
+    responses(
+        (status = 201, description = "Directory created", body = FileNode),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Parent not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn create_directory(
     state: web::Data<AppState>,
     auth: AuthUser,
     body: web::Json<CreateDirectoryBody>,
@@ -157,7 +196,19 @@ async fn create_directory(
 }
 
 /// `PUT /files/{id}/name` — rename a node.
-async fn rename(
+#[utoipa::path(
+    put,
+    path = "/api/v1/files/{id}/name",
+    params(("id" = String, Path, description = "Node ID")),
+    request_body = RenameBody,
+    responses(
+        (status = 200, description = "Node renamed", body = FileNode),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn rename(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -169,7 +220,19 @@ async fn rename(
 }
 
 /// `POST /files/{id}/move` — move a node to a different parent.
-async fn move_node(
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/move",
+    params(("id" = String, Path, description = "Node ID")),
+    request_body = MoveBody,
+    responses(
+        (status = 200, description = "Node moved", body = FileNode),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn move_node(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -182,7 +245,18 @@ async fn move_node(
 }
 
 /// `DELETE /files/{id}` — soft-delete (move to trash).
-async fn soft_delete(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/files/{id}",
+    params(("id" = String, Path, description = "Node ID")),
+    responses(
+        (status = 204, description = "Moved to trash"),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn soft_delete(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -193,7 +267,18 @@ async fn soft_delete(
 }
 
 /// `POST /files/{id}/restore` — restore from trash.
-async fn restore(
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/restore",
+    params(("id" = String, Path, description = "Node ID")),
+    responses(
+        (status = 200, description = "Node restored from trash", body = FileNode),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn restore(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -208,7 +293,18 @@ async fn restore(
 /// Irreversible.  The node and all its descendants are removed from the
 /// database.  Content deduplication means storage chunks are only freed
 /// by a separate garbage-collection pass.
-async fn permanent_delete(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/files/{id}/permanent",
+    params(("id" = String, Path, description = "Node ID")),
+    responses(
+        (status = 204, description = "Permanently deleted"),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn permanent_delete(
     state: web::Data<AppState>,
     _auth: AuthUser,
     path: web::Path<String>,
@@ -221,7 +317,19 @@ async fn permanent_delete(
 /// `POST /files/{id}/copy` — copy a node (and subtree) under a new parent.
 ///
 /// Returns the root of the copied subtree with a new ID.
-async fn copy_node(
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/{id}/copy",
+    params(("id" = String, Path, description = "Node ID")),
+    request_body = CopyBody,
+    responses(
+        (status = 201, description = "Copy created", body = FileNode),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn copy_node(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -235,7 +343,16 @@ async fn copy_node(
 }
 
 /// `GET /files/trash` — list all soft-deleted nodes owned by the caller.
-async fn list_trash(
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/trash",
+    responses(
+        (status = 200, description = "Trash contents", body = Vec<FileNode>),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn list_trash(
     state: web::Data<AppState>,
     auth:  AuthUser,
 ) -> Result<HttpResponse, ApiError> {
@@ -264,7 +381,24 @@ async fn list_trash(
 /// treated as a web-browser client.
 ///
 /// Returns the new [`FileNode`] as JSON with `201 Created`.
-async fn upload_file(
+#[utoipa::path(
+    post,
+    path = "/api/v1/upload/",
+    params(
+        ("parent_id" = String, Query, description = "Parent directory ID"),
+        ("name" = String, Query, description = "Filename"),
+        ("mime_type" = Option<String>, Query, description = "MIME type hint"),
+    ),
+    request_body(content = Vec<u8>, content_type = "application/octet-stream"),
+    responses(
+        (status = 201, description = "File uploaded", body = FileNode),
+        (status = 413, description = "File too large for web upload"),
+        (status = 426, description = "Use QUIC for large files (native client)"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn upload_file(
     state: web::Data<AppState>,
     auth:  AuthUser,
     query: web::Query<UploadQuery>,
@@ -342,7 +476,21 @@ async fn upload_file(
 /// structured error is returned before any bytes are read from storage:
 /// - Native client, size >= `large_file_threshold` → `426` (use QUIC).
 /// - Web client, size > web limit → `413` (install native client).
-async fn download_file(
+#[utoipa::path(
+    get,
+    path = "/api/v1/download/{id}",
+    params(("id" = String, Path, description = "File node ID")),
+    responses(
+        (status = 200, description = "Full file content", content_type = "application/octet-stream"),
+        (status = 206, description = "Partial content (Range request)"),
+        (status = 404, description = "Not found"),
+        (status = 413, description = "File too large for web download"),
+        (status = 426, description = "Use QUIC for large files (native client)"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn download_file(
     state:   web::Data<AppState>,
     _auth:   AuthUser,
     path:    web::Path<String>,

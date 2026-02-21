@@ -24,7 +24,7 @@
 //! | `X-Content-Type-Options`    | `nosniff`                                              |
 //! | `X-XSS-Protection`          | `1; mode=block` *(legacy browsers)*                   |
 //! | `Referrer-Policy`           | `strict-origin-when-cross-origin`                      |
-//! | `Content-Security-Policy`   | `default-src 'self'; img-src 'self' data:; ...`        |
+//! | `Content-Security-Policy`   | `default-src 'self'; script/style/font 'self' 'unsafe-inline'; ...` |
 //! | `Permissions-Policy`        | `camera=(), microphone=(), geolocation=()`             |
 
 use actix_web::{
@@ -62,12 +62,18 @@ pub async fn security_headers<B: MessageBody>(
         ("x-xss-protection", "1; mode=block"),
         // Don't leak the full URL to third-party origins.
         ("referrer-policy", "strict-origin-when-cross-origin"),
-        // Basic CSP: only allow content from same origin.  Extend in
-        // production if you serve external fonts/CDN assets.
+        // Basic CSP: only allow content from same origin.
+        // /swagger-ui assets are fully bundled into the binary — no CDN needed.
+        // 'unsafe-inline' is required for Swagger UI's inline style blocks.
         (
             "content-security-policy",
-            "default-src 'self'; img-src 'self' data:; font-src 'self'; \
-             style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+            "default-src 'self'; \
+             script-src 'self' 'unsafe-inline'; \
+             style-src 'self' 'unsafe-inline'; \
+             font-src 'self' data:; \
+             img-src 'self' data:; \
+             connect-src 'self'; \
+             frame-ancestors 'none'",
         ),
         // Deny access to powerful browser APIs not needed by a file-sync app.
         (

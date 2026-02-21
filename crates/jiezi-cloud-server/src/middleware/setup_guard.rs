@@ -13,8 +13,9 @@
 //! |------------------------------|-----------------------------------------|
 //! | `/api/v1/setup`              | the wizard itself                       |
 //! | `/api/v1/openapi.json`       | spec must be accessible before setup   |
-//! | `/scalar`                    | API explorer must be accessible         |
+//! | `/swagger-ui`                | API explorer must be accessible         |
 //! | `/health`                    | liveness probe for container orchestr.  |
+//! | `/favicon.ico`               | browser auto-fetch, no auth needed      |
 
 use std::sync::atomic::Ordering;
 
@@ -38,11 +39,13 @@ pub async fn setup_guard(
 ) -> Result<ServiceResponse<BoxBody>, Error> {
     let path = req.path();
 
-    // Always let through: the setup wizard itself, API docs, health probe.
+    // Always let through: the setup wizard itself, API docs, health probe,
+    // and common browser-initiated static requests.
     if path.starts_with("/api/v1/setup")
-        || path.starts_with("/scalar")
+        || path.starts_with("/swagger-ui")
         || path.ends_with("/openapi.json")
         || path == "/health"
+        || path == "/favicon.ico"
     {
         return next.call(req).await;
     }

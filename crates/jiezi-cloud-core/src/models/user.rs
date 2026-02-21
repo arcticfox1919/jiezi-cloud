@@ -9,7 +9,7 @@ use crate::types::{SpaceId, UserId};
 
 /// User role — determines the base set of permissions.
 /// Resource-level overrides can refine these defaults.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Full system owner; has every permission everywhere.
@@ -37,7 +37,7 @@ impl std::fmt::Display for Role {
 // ─── Permission ───────────────────────────────────────────────────────────────
 
 /// A permission grant scoped to an optional space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Permission {
     /// The role this permission grant corresponds to.
     pub role: Role,
@@ -49,7 +49,7 @@ pub struct Permission {
 // ─── User ─────────────────────────────────────────────────────────────────────
 
 /// Core user entity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct User {
     pub id: UserId,
     pub username: String,
@@ -111,7 +111,7 @@ pub struct User {
 // ─── JWT claims ───────────────────────────────────────────────────────────────
 
 /// Claims embedded in a JWT access token.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Claims {
     /// Subject — the user's ID serialised as a UUID string.
     pub sub: String,
@@ -144,7 +144,7 @@ pub struct RefreshClaims {
 
 /// A short-lived access token paired with a longer-lived refresh token.
 /// Returned after a successful login or token refresh.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TokenPair {
     pub access_token: String,
     pub refresh_token: String,
@@ -155,7 +155,7 @@ pub struct TokenPair {
 // ─── Request DTOs ─────────────────────────────────────────────────────────────
 
 /// Payload for the user registration endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
     pub username: String,
     pub email: String,
@@ -173,7 +173,7 @@ pub struct RegisterRequest {
 ///
 /// Each field is doubly-wrapped in `Option` so the client can distinguish
 /// "omit this field" (`None`) from "clear this field" (`Some(None)`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdateProfileRequest {
     /// Pass `Some(Some("Alice"))` to set, `Some(None)` to clear.
     pub display_name: Option<Option<String>>,
@@ -182,7 +182,7 @@ pub struct UpdateProfileRequest {
 }
 
 /// Payload for `POST /auth/me/password` — change own password.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChangeOwnPasswordRequest {
     /// The caller's current password (verified before accepting the change).
     pub old_password: String,
@@ -194,46 +194,46 @@ pub struct ChangeOwnPasswordRequest {
 }
 
 /// Payload for `PATCH /admin/users/{id}/role` — change a user's system role.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ChangeRoleRequest {
     pub new_role: Role,
 }
 
 /// Payload for `PATCH /admin/users/{id}/status` — suspend or reactivate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SetActiveRequest {
     pub is_active: bool,
 }
 
 /// Payload for `POST /admin/users/{id}/reset-password` — admin force-reset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AdminResetPasswordRequest {
     /// The new password to assign.  Minimum 8 characters.
     pub new_password: String,
 }
 
 /// Payload for `PATCH /admin/users/{id}/quota` — set storage quota.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SetQuotaRequest {
     /// Storage maximum in bytes.  `null` means unlimited.
     pub storage_quota: Option<u64>,
 }
 
 /// Payload for `POST /auth/logout` — revoke a refresh token (log out a device).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LogoutRequest {
     pub refresh_token: String,
 }
 
 /// Payload for `POST /auth/send-register-otp` — request an OTP for registration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SendOtpRequest {
     /// The email address to send the OTP to.
     pub email: String,
 }
 
 /// Payload for `POST /auth/reset-password` — reset password using an OTP code.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ResetPasswordWithOtpRequest {
     pub email:        String,
     /// The 6-digit OTP that was emailed via `POST /auth/forgot-password`.
@@ -242,7 +242,7 @@ pub struct ResetPasswordWithOtpRequest {
 }
 
 /// Payload for `POST /auth/unlock-account` — unlock a locked account using OTP.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UnlockWithOtpRequest {
     pub email: String,
     /// The 6-digit OTP that was emailed via `POST /auth/send-unlock-otp`.
@@ -250,7 +250,7 @@ pub struct UnlockWithOtpRequest {
 }
 
 /// Payload for the user login endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     /// Either a username or an email address.
     pub credential: String,
@@ -267,7 +267,7 @@ pub struct LoginRequest {
 ///
 /// Identified by its `family` UUID, which stays constant across all
 /// refresh-token rotations within the same login session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SessionInfo {
     /// Stable identifier for this session (JWT rotation family UUID).
     pub family: String,

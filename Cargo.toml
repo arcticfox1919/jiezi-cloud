@@ -51,7 +51,7 @@ tracing-actix-web    = "0.7"
 # utoipa generates OpenAPI 3.1 schemas from Rust types + #[utoipa::path] macros.
 # actix_extras feature auto-extracts path/query/body params from Actix handlers.
 utoipa              = { version = "5", features = ["actix_extras", "chrono", "uuid"] }
-utoipa-scalar       = { version = "0.2", features = ["actix-web"] }
+utoipa-swagger-ui   = { version = "9", features = ["actix-web"] }
 
 # ── Async trait support ───────────────────────────────────────────────────────
 async-trait    = "0.1"

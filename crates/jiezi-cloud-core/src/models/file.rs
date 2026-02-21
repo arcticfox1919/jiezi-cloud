@@ -9,7 +9,7 @@ use crate::types::{FileId, SpaceId, UserId};
 // ─── NodeType ─────────────────────────────────────────────────────────────────
 
 /// The kind of a virtual file system node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     /// A regular file with binary content.
@@ -29,7 +29,7 @@ pub type MimeType = String;
 ///
 /// File content is stored separately by the storage backend; this struct
 /// holds only the metadata that lives in the database.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileNode {
     pub id: FileId,
     /// `None` only for the root node of a space.
@@ -66,7 +66,7 @@ impl FileNode {
 // ─── FileMetadata ─────────────────────────────────────────────────────────────
 
 /// Extended, optional metadata attached to a file node.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FileMetadata {
     /// User-defined tags for filtering and organisation.
     #[serde(default)]

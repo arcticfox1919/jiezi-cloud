@@ -21,7 +21,7 @@ use actix_web::{web, HttpResponse};
 
 use jiezi_cloud_core::error::AppError;
 use jiezi_cloud_core::models::user::{
-    AdminResetPasswordRequest, ChangeRoleRequest, Role, SetActiveRequest, SetQuotaRequest,
+    AdminResetPasswordRequest, ChangeRoleRequest, Role, SetActiveRequest, SetQuotaRequest, User,
 };
 use jiezi_cloud_core::types::{PageRequest, UserId};
 
@@ -80,7 +80,21 @@ fn require_owner(role: Role) -> Result<(), ApiError> {
 ///
 /// Returns a paginated list of all users.
 /// Requires `Admin` or `Owner`.
-async fn list_users(
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users",
+    params(
+        ("page" = Option<u32>, Query, description = "Page number"),
+        ("per_page" = Option<u32>, Query, description = "Items per page"),
+    ),
+    responses(
+        (status = 200, description = "Paginated user list", body = Vec<User>),
+        (status = 403, description = "Forbidden"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn list_users(
     state: web::Data<AppState>,
     auth:  AuthUser,
     query: web::Query<PageQueryParams>,
@@ -100,7 +114,19 @@ async fn list_users(
 ///
 /// Returns the full user record for the given ID.
 /// Requires `Admin` or `Owner`.
-async fn get_user(
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/users/{id}",
+    params(("id" = String, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "User record", body = User),
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Not found"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn get_user(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -120,7 +146,19 @@ async fn get_user(
 /// - Owner may grant any role.
 /// - Admin may only promote/demote between `Member` and `Guest`.
 /// - Nobody may change their own role.
-async fn change_role(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/users/{id}/role",
+    params(("id" = String, Path, description = "User ID")),
+    request_body = ChangeRoleRequest,
+    responses(
+        (status = 200, description = "Role updated", body = User),
+        (status = 403, description = "Forbidden"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn change_role(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -145,7 +183,19 @@ async fn change_role(
 ///
 /// Suspend (`is_active: false`) or reactivate (`is_active: true`) a user.
 /// Admin cannot suspend an Owner.
-async fn set_status(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/users/{id}/status",
+    params(("id" = String, Path, description = "User ID")),
+    request_body = SetActiveRequest,
+    responses(
+        (status = 204, description = "Status updated"),
+        (status = 403, description = "Forbidden"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn set_status(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -168,7 +218,19 @@ async fn set_status(
 ///
 /// Force-reset a user's password without knowing their current one.
 /// Requires `Admin` or `Owner`.
-async fn reset_password(
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/users/{id}/reset-password",
+    params(("id" = String, Path, description = "User ID")),
+    request_body = AdminResetPasswordRequest,
+    responses(
+        (status = 204, description = "Password reset"),
+        (status = 403, description = "Forbidden"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn reset_password(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -191,7 +253,19 @@ async fn reset_password(
 ///
 /// Set or clear a user's storage quota.
 /// Requires `Owner` (only the owner controls quotas).
-async fn set_quota(
+#[utoipa::path(
+    patch,
+    path = "/api/v1/admin/users/{id}/quota",
+    params(("id" = String, Path, description = "User ID")),
+    request_body = SetQuotaRequest,
+    responses(
+        (status = 204, description = "Quota updated"),
+        (status = 403, description = "Forbidden — requires Owner role"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn set_quota(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -214,7 +288,18 @@ async fn set_quota(
 ///
 /// Permanently delete a user account and revoke all their sessions.
 /// Requires `Owner`.  Cannot delete the last owner account.
-async fn delete_user(
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/users/{id}",
+    params(("id" = String, Path, description = "User ID")),
+    responses(
+        (status = 204, description = "User deleted"),
+        (status = 403, description = "Forbidden — requires Owner role"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin"
+)]
+pub async fn delete_user(
     state: web::Data<AppState>,
     auth:  AuthUser,
     path:  web::Path<String>,
@@ -232,7 +317,7 @@ async fn delete_user(
 
 /// Query parameters for the list endpoint.
 #[derive(serde::Deserialize)]
-struct PageQueryParams {
+pub struct PageQueryParams {
     page:     Option<u32>,
     per_page: Option<u32>,
 }
