@@ -15,7 +15,7 @@ pub mod test_helpers {
     /// Create an in-memory SQLite database pre-populated with the VFS schema.
     ///
     /// Uses [`Schema::create_table_from_entity`] so there is no dependency on
-    /// the migration crate — schema changes in entities are picked up
+    /// the migration crate �?schema changes in entities are picked up
     /// automatically.
     ///
     /// Foreign-key enforcement is disabled for test databases so tests can use
@@ -77,7 +77,7 @@ async fn make_root(repo: &FileNodeRepository) -> FileNode {
     repo.create_root(space_id, owner_id).await.unwrap()
 }
 
-// ── TDD 4.2 — Directory operations ───────────────────────────────────────
+// ── TDD 4.2 �?Directory operations ───────────────────────────────────────
 
 // TDD 4.2-1: create a root directory
 #[tokio::test]
@@ -133,7 +133,7 @@ async fn test_list_children_immediate_only() {
     repo.create_directory(&root.id, "a", owner).await.unwrap();
     repo.create_directory(&root.id, "b", owner).await.unwrap();
     let a = repo.create_directory(&root.id, "c", owner).await.unwrap();
-    // Child of a — should NOT appear when listing root.
+    // Child of a �?should NOT appear when listing root.
     repo.create_directory(&a.id, "deep", owner).await.unwrap();
 
     let resp = repo.list_children(&root.id, &page).await.unwrap();
@@ -211,7 +211,7 @@ async fn test_get_nonexistent_node() {
     assert!(matches!(err, AppError::NotFound(_)));
 }
 
-// TDD 4.3 — File record operations ────────────────────────────────────────
+// TDD 4.3 �?File record operations ────────────────────────────────────────
 
 // TDD 4.3-1: create a file record and verify fields
 #[tokio::test]
@@ -239,12 +239,12 @@ async fn test_create_file_name_conflict() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    repo.create_file(&root.id, "report.pdf", 512, None, None, owner).await.unwrap();
-    let err = repo.create_file(&root.id, "report.pdf", 512, None, None, owner).await.unwrap_err();
+    repo.create_file(&root.id, "report.pdf", 512, None, None, owner, None).await.unwrap();
+    let err = repo.create_file(&root.id, "report.pdf", 512, None, None, owner, None).await.unwrap_err();
     assert!(matches!(err, AppError::Conflict(_)));
 }
 
-// ── TDD 4.4 — Rename and move ─────────────────────────────────────────────
+// ── TDD 4.4 �?Rename and move ─────────────────────────────────────────────
 
 // TDD 4.4-1: rename a file
 #[tokio::test]
@@ -253,7 +253,7 @@ async fn test_rename_file() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let f = repo.create_file(&root.id, "old.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "old.txt", 0, None, None, owner, None).await.unwrap();
     let renamed = repo.rename(&f.id, "new.txt").await.unwrap();
 
     assert_eq!(renamed.name, "new.txt");
@@ -267,8 +267,8 @@ async fn test_rename_conflict() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let _f1 = repo.create_file(&root.id, "a.txt", 0, None, None, owner).await.unwrap();
-    let f2 = repo.create_file(&root.id, "b.txt", 0, None, None, owner).await.unwrap();
+    let _f1 = repo.create_file(&root.id, "a.txt", 0, None, None, owner, None).await.unwrap();
+    let f2 = repo.create_file(&root.id, "b.txt", 0, None, None, owner, None).await.unwrap();
 
     let err = repo.rename(&f2.id, "a.txt").await.unwrap_err();
     assert!(matches!(err, AppError::Conflict(_)));
@@ -283,7 +283,7 @@ async fn test_move_file() {
 
     let dir_a = repo.create_directory(&root.id, "a", owner).await.unwrap();
     let dir_b = repo.create_directory(&root.id, "b", owner).await.unwrap();
-    let f = repo.create_file(&dir_a.id, "file.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&dir_a.id, "file.txt", 0, None, None, owner, None).await.unwrap();
 
     let moved = repo.move_node(&f.id, &dir_b.id).await.unwrap();
 
@@ -337,7 +337,7 @@ async fn test_copy_file() {
     assert_eq!(b_children.items.len(), 1);
 }
 
-// ── TDD 4.5 — Soft delete and trash ───────────────────────────────────────
+// ── TDD 4.5 �?Soft delete and trash ───────────────────────────────────────
 
 // TDD 4.5-1: deleted node does not appear in live children
 #[tokio::test]
@@ -346,7 +346,7 @@ async fn test_deleted_node_excluded_from_children() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let f = repo.create_file(&root.id, "data.bin", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "data.bin", 0, None, None, owner, None).await.unwrap();
     let page = PageRequest::new(1, 20);
 
     assert_eq!(repo.list_children(&root.id, &page).await.unwrap().total, 1);
@@ -363,7 +363,7 @@ async fn test_trash_contains_deleted_node() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let f = repo.create_file(&root.id, "trash_me.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "trash_me.txt", 0, None, None, owner, None).await.unwrap();
     repo.soft_delete(&f.id).await.unwrap();
 
     let trash = repo.list_trash(&owner).await.unwrap();
@@ -379,7 +379,7 @@ async fn test_delete_directory_cascades_to_children() {
     let owner = root.owner_id;
 
     let dir = repo.create_directory(&root.id, "folder", owner).await.unwrap();
-    let child = repo.create_file(&dir.id, "file.txt", 0, None, None, owner).await.unwrap();
+    let child = repo.create_file(&dir.id, "file.txt", 0, None, None, owner, None).await.unwrap();
 
     repo.soft_delete(&dir.id).await.unwrap();
 
@@ -403,7 +403,7 @@ async fn test_restore_node() {
     let owner = root.owner_id;
     let page = PageRequest::new(1, 20);
 
-    let f = repo.create_file(&root.id, "restore_me.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "restore_me.txt", 0, None, None, owner, None).await.unwrap();
     repo.soft_delete(&f.id).await.unwrap();
 
     assert_eq!(repo.list_children(&root.id, &page).await.unwrap().total, 0);
@@ -420,7 +420,7 @@ async fn test_restore_non_deleted_returns_not_found() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let f = repo.create_file(&root.id, "live.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "live.txt", 0, None, None, owner, None).await.unwrap();
     let err = repo.restore(&f.id).await.unwrap_err();
     assert!(matches!(err, AppError::NotFound(_)));
 }
@@ -432,7 +432,7 @@ async fn test_permanent_delete() {
     let root = make_root(&repo).await;
     let owner = root.owner_id;
 
-    let f = repo.create_file(&root.id, "gone.txt", 0, None, None, owner).await.unwrap();
+    let f = repo.create_file(&root.id, "gone.txt", 0, None, None, owner, None).await.unwrap();
     repo.soft_delete(&f.id).await.unwrap();
     repo.permanent_delete(&f.id).await.unwrap();
 

@@ -115,9 +115,22 @@ impl VfsService for VfsServiceImpl {
         content_hash: Option<String>,
         mime_type: Option<String>,
         owner: &UserId,
+        file_id: Option<FileId>,
     ) -> AppResult<FileNode> {
         self.repo
-            .create_file(parent_id, name, size, content_hash, mime_type, *owner)
+            .create_file(parent_id, name, size, content_hash, mime_type, *owner, file_id)
             .await
+    }
+
+    async fn create_root(&self, owner: &UserId) -> AppResult<FileNode> {
+        self.repo.create_root_for_user(*owner).await
+    }
+
+    async fn list_roots(&self, owner: &UserId) -> AppResult<Vec<FileNode>> {
+        self.repo.list_roots(owner).await
+    }
+
+    async fn find_by_content_hash(&self, content_hash: &str) -> AppResult<Option<FileNode>> {
+        self.repo.find_by_content_hash(content_hash).await
     }
 }

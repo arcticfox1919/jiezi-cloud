@@ -31,6 +31,8 @@ pub mod m20260220_000008_create_file_chunks;
 pub mod m20260220_000009_create_system_settings;
 pub mod m20260220_000010_add_login_lockout;
 pub mod m20260220_000011_add_email_verification;
+pub mod m20260220_000012_create_upload_sessions;
+pub mod m20260220_000013_create_download_tokens;
 
 use sea_orm_migration::prelude::*;
 
@@ -53,6 +55,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260220_000009_create_system_settings::Migration),
             Box::new(m20260220_000010_add_login_lockout::Migration),
             Box::new(m20260220_000011_add_email_verification::Migration),
+            Box::new(m20260220_000012_create_upload_sessions::Migration),
+            Box::new(m20260220_000013_create_download_tokens::Migration),
         ]
     }
 }

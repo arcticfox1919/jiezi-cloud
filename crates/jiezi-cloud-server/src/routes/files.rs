@@ -52,6 +52,9 @@ use crate::state::AppState;
 /// Register VFS metadata routes under `/api/v1/files`.
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg
+        // Root-directory management (no path parameter).
+        .route("/root",      web::post().to(create_root))
+        .route("/root",      web::get().to(list_roots))
         // Static routes must come before parameterised routes.
         .route("/directory", web::post().to(create_directory))
         .route("/trash",     web::get().to(list_trash))
@@ -361,6 +364,49 @@ pub async fn list_trash(
     Ok(HttpResponse::Ok().json(nodes))
 }
 
+/// `POST /files/root` — create the personal root directory for the caller.
+///
+/// Idempotent in the sense that callers should call `GET /files/root` first;
+/// this endpoint always creates a *new* root node.
+#[utoipa::path(
+    post,
+    path = "/api/v1/files/root",
+    responses(
+        (status = 201, description = "Root directory created", body = FileNode),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn create_root(
+    state: web::Data<AppState>,
+    auth: AuthUser,
+) -> Result<HttpResponse, ApiError> {
+    let owner_id = parse_user_id(&auth.0.sub)?;
+    let node = state.vfs.create_root(&owner_id).await?;
+    Ok(HttpResponse::Created().json(node))
+}
+
+/// `GET /files/root` — list all personal root nodes owned by the caller.
+///
+/// Returns the user's root directories (nodes with no parent).
+#[utoipa::path(
+    get,
+    path = "/api/v1/files/root",
+    responses(
+        (status = 200, description = "List of root directories", body = Vec<FileNode>),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "files"
+)]
+pub async fn list_roots(
+    state: web::Data<AppState>,
+    auth: AuthUser,
+) -> Result<HttpResponse, ApiError> {
+    let owner_id = parse_user_id(&auth.0.sub)?;
+    let nodes = state.vfs.list_roots(&owner_id).await?;
+    Ok(HttpResponse::Ok().json(nodes))
+}
+
 // ─── Upload / download handlers ───────────────────────────────────────────────
 
 /// `POST /upload/?parent_id=…&name=…` — upload a file.
@@ -443,7 +489,8 @@ pub async fn upload_file(
         .store_file(&file_id, body, &ReplicationPolicy::default())
         .await?;
 
-    // Create the VFS metadata node.
+    // Create the VFS metadata node, reusing the same ID so that
+    // DownloadService can look up file_chunks by the VFS node ID.
     let node = state
         .vfs
         .create_file_record(
@@ -453,6 +500,7 @@ pub async fn upload_file(
             Some(stored.content_hash),
             query.mime_type.clone(),
             &owner_id,
+            Some(file_id),
         )
         .await
         .map_err(|e| {

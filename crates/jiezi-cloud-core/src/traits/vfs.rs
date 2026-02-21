@@ -126,6 +126,12 @@ pub trait VfsService: Send + Sync {
     /// safely persisted to storage backends.  Generic VFS clients (directory
     /// browsing, rename, etc.) should not call this directly.
     ///
+    /// When `file_id` is `Some`, the provided ID is used for the new node —
+    /// allowing the caller to reuse the same ID that was passed to
+    /// [`UploadService::store_file`] so that the download service can look up
+    /// the file by its VFS node ID.  When `None` a fresh [`FileId`] is
+    /// generated.
+    ///
     /// # Errors
     ///
     /// - [`AppError::NotFound`] if `parent_id` does not exist.
@@ -138,5 +144,25 @@ pub trait VfsService: Send + Sync {
         content_hash: Option<String>,
         mime_type: Option<String>,
         owner: &UserId,
+        file_id: Option<FileId>,
     ) -> AppResult<FileNode>;
+
+    /// Create a personal root directory for `owner`.
+    ///
+    /// Returns the new root [`FileNode`].  The root has no parent (`parent_id`
+    /// is `None`) and is named `"/"`.
+    ///
+    /// Callers should check whether the user already has a root (e.g. via
+    /// `list_roots`) before calling this to avoid duplicates.
+    async fn create_root(&self, owner: &UserId) -> AppResult<FileNode>;
+
+    /// Return all root nodes owned by `owner` (nodes without a parent).
+    async fn list_roots(&self, owner: &UserId) -> AppResult<Vec<FileNode>>;
+
+    /// Return a file node that has matching `content_hash`, if any exists.
+    ///
+    /// Used by the upload deduplication fast-path to detect when a file with
+    /// the same content has already been stored.  Returns `None` when no match
+    /// is found.
+    async fn find_by_content_hash(&self, content_hash: &str) -> AppResult<Option<FileNode>>;
 }

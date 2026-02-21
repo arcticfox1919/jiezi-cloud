@@ -161,6 +161,7 @@ impl FileNodeRepository {
         content_hash: Option<String>,
         mime_type: Option<String>,
         owner_id: UserId,
+        file_id: Option<FileId>,
     ) -> AppResult<FileNode> {
         let parent = self.require_model(parent_id).await?;
 
@@ -169,7 +170,7 @@ impl FileNodeRepository {
         }
 
         let now = Utc::now();
-        let id = FileId::new();
+        let id = file_id.unwrap_or_else(FileId::new);
         let am = file_nodes::ActiveModel {
             id:            Set(id.to_string()),
             parent_id:     Set(Some(parent_id.to_string())),
@@ -443,6 +444,61 @@ impl FileNodeRepository {
         }
 
         root_node.ok_or_else(|| AppError::Internal("copy produced no root node".to_owned()))
+    }
+
+    /// Create a personal root directory for `owner_id` (no space, no parent).
+    ///
+    /// A synthetic [`SpaceId`] is derived from the owner's ID so that every
+    /// user has a unique, stable space UUID without requiring a separate
+    /// `spaces` lookup.
+    pub async fn create_root_for_user(&self, owner_id: UserId) -> AppResult<FileNode> {
+        // Derive a stable space_id from the user_id (deterministic UUID v5-style).
+        let space_id: SpaceId = owner_id
+            .to_string()
+            .parse()
+            .map_err(|e: uuid::Error| AppError::Database(e.to_string()))?;
+        let id = FileId::new();
+        let am = new_directory_active_model(id, None, space_id, owner_id, "/");
+        let m = am.insert(self.db()).await.map_err(|e| AppError::Database(e.to_string()))?;
+        tree::insert_node_paths(self.db(), &id, None).await?;
+        model_to_file_node(m)
+    }
+
+    /// Return all root nodes (nodes with `parent_id = NULL`) owned by `owner_id`.
+    pub async fn list_roots(&self, owner_id: &UserId) -> AppResult<Vec<FileNode>> {
+        let rows = file_nodes::Entity::find()
+            .filter(
+                file_nodes::Column::OwnerId
+                    .eq(owner_id.to_string())
+                    .and(file_nodes::Column::ParentId.is_null())
+                    .and(file_nodes::Column::DeletedAt.is_null()),
+            )
+            .all(self.db())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        rows.into_iter().map(model_to_file_node).collect()
+    }
+
+    /// Return the first non-deleted file node with the given `content_hash`,
+    /// or `None` if no such node exists.
+    ///
+    /// Used by the upload pipeline's deduplication fast-path.
+    pub async fn find_by_content_hash(
+        &self,
+        content_hash: &str,
+    ) -> AppResult<Option<FileNode>> {
+        let maybe = file_nodes::Entity::find()
+            .filter(
+                file_nodes::Column::ContentHash
+                    .eq(content_hash)
+                    .and(file_nodes::Column::DeletedAt.is_null()),
+            )
+            .one(self.db())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        maybe.map(model_to_file_node).transpose()
     }
 }
 

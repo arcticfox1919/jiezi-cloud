@@ -158,6 +158,14 @@ async fn main() -> std::io::Result<()> {
 
     let app_state = build_app_state(db, &cfg, setup_done).await;
 
+    // ── Step 7c: Background GC for upload sessions and download tokens ────────
+    //
+    // Upload sessions: scan every 10 minutes for sessions that have exceeded
+    // their 24-hour TTL and delete their temporary chunk files.
+    // Download tokens: scan every 60 minutes to purge expired rows.
+    app_state.upload_sessions.clone().spawn_gc(10);
+    app_state.download_tokens.clone().spawn_gc(60);
+
     // ── Step 8a: Start QUIC file-transfer server ──────────────────────────────
     if cfg.quic.enabled {
         let quic_state = app_state.clone();

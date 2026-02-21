@@ -38,7 +38,11 @@ use jiezi_cloud_config::AppConfig;
 use jiezi_cloud_storage::{DownloadService, LocalFsBackend, StorageManager, UploadService};
 use jiezi_cloud_vfs::{repository::FileNodeRepository, VfsServiceImpl};
 
-use crate::repository::settings::SystemSettingsRepository;
+use crate::repository::{
+    download_token::DownloadTokenRepository,
+    settings::SystemSettingsRepository,
+    upload_session::UploadSessionRepository,
+};
 
 // ─── App-state factory ────────────────────────────────────────────────────────
 
@@ -168,6 +172,10 @@ pub async fn build_app_state(
     let upload   = UploadService::new(storage.clone(), db.clone());
     let download = DownloadService::new(storage.clone(), db.clone());
 
+    let tmp_dir = cfg.storage.local_root.join(".upload_tmp");
+    let upload_sessions = UploadSessionRepository::new(db.clone(), tmp_dir);
+    let download_tokens = DownloadTokenRepository::new(db.clone());
+
     let settings_repo = SystemSettingsRepository::new(db.clone());
 
     state::AppState {
@@ -178,6 +186,8 @@ pub async fn build_app_state(
         storage,
         upload,
         download,
+        upload_sessions,
+        download_tokens,
         settings: settings_repo,
         setup_completed: Arc::new(AtomicBool::new(setup_completed)),
         quic_port: cfg.quic.enabled.then_some(cfg.quic.port),

@@ -129,26 +129,26 @@
 
 ## Stage 7.5 — Resumable Upload Sessions
 
-- [ ] `upload_sessions` DB table + migration (id, user_id, file_name, total_size, content_hash, chunk_statuses, created_at, expires_at)
-- [ ] `UploadSessionRepository` + SeaORM entity
-- [ ] `POST /api/v1/upload/prepare` — create session, return session_id; instant-upload check (dedup by content_hash)
-- [ ] `GET /api/v1/upload/{session_id}/status` — return missing chunk indices
-- [ ] `POST /api/v1/upload/{session_id}/chunk/{index}` — upload individual chunk
-- [ ] `POST /api/v1/upload/{session_id}/complete` — assemble file, create VFS record
-- [ ] `DELETE /api/v1/upload/{session_id}` — cancel and clean up
-- [ ] Session expiry background job (purge stale sessions)
-- [ ] Tests: prepare → partial upload → resume → complete lifecycle
+- [x] `upload_sessions` DB table + migration (id, user_id, file_name, total_size, content_hash, chunk_statuses, created_at, expires_at)
+- [x] `UploadSessionRepository` + SeaORM entity
+- [x] `POST /api/v1/upload/prepare` — create session, return session_id; instant-upload check (dedup by content_hash)
+- [x] `GET /api/v1/upload/{session_id}/status` — return missing chunk indices
+- [x] `POST /api/v1/upload/{session_id}/chunk/{index}` — upload individual chunk
+- [x] `POST /api/v1/upload/{session_id}/complete` — assemble file, create VFS record
+- [x] `DELETE /api/v1/upload/{session_id}` — cancel and clean up
+- [x] Session expiry background job (purge stale sessions)
+- [x] Tests: prepare → partial upload → resume → complete lifecycle
 
 ---
 
 ## Stage 8 — Download Tokens & Streaming
 
-- [ ] `download_tokens` DB table + migration (token, file_node_id, user_id, expires_at, one_time)
-- [ ] `POST /api/v1/download/{id}/token` — generate time-limited download token
-- [ ] Token validation middleware for unauthenticated download URLs
+- [x] `download_tokens` DB table + migration (token, file_node_id, user_id, expires_at, one_time)
+- [x] `POST /api/v1/download/{id}/token` — generate time-limited download token
+- [x] Token validation middleware for unauthenticated download URLs
 - [ ] QUIC download uses token for auth (no JWT header over QUIC stream)
 - [ ] Streaming download with back-pressure (no full buffer in memory)
-- [ ] Tests: token generation, expiry, one-time use, invalid token rejection
+- [x] Tests: token generation, expiry, one-time use, invalid token rejection
 
 ---
 

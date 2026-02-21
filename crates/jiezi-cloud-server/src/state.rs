@@ -13,7 +13,11 @@ use jiezi_cloud_auth::JwtManager;
 use jiezi_cloud_core::traits::{auth::AuthService, vfs::VfsService};
 use jiezi_cloud_storage::{DownloadService, StorageManager, UploadService};
 
-use crate::repository::settings::SystemSettingsRepository;
+use crate::repository::{
+    download_token::DownloadTokenRepository,
+    settings::SystemSettingsRepository,
+    upload_session::UploadSessionRepository,
+};
 
 /// Application-wide shared state.
 #[derive(Clone)]
@@ -32,6 +36,14 @@ pub struct AppState {
     pub upload: UploadService,
     /// Download pipeline: DB chunk records → backends → byte stream.
     pub download: DownloadService,
+    /// Resumable-upload session repository.
+    ///
+    /// Tracks chunked upload sessions and their temp files.
+    pub upload_sessions: UploadSessionRepository,
+    /// Download token repository.
+    ///
+    /// Issues and validates time-limited, optionally single-use download tokens.
+    pub download_tokens: DownloadTokenRepository,
     /// Repository for the `system_settings` key-value table.
     ///
     /// Used by setup and admin-settings handlers to read/write server

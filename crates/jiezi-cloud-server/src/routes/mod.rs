@@ -2,7 +2,9 @@
 
 pub mod admin;
 pub mod auth;
+pub mod download_token;
 pub mod files;
+pub mod resumable_upload;
 pub mod setup;
 pub mod sse;
 
@@ -18,10 +20,24 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(web::scope("/setup").configure(setup::configure))
             .service(web::scope("/auth").configure(auth::configure))
             .service(web::scope("/files").configure(files::configure))
-            // Upload pipeline: POST /api/v1/upload/?parent_id=…&name=…
-            .service(web::scope("/upload").configure(files::configure_upload))
-            // Download pipeline: GET /api/v1/download/{id}
-            .service(web::scope("/download").configure(files::configure_download))
+            // Upload pipeline:
+            //   POST /api/v1/upload/          — simple single-shot upload
+            //   POST /api/v1/upload/prepare   — resumable session prepare
+            //   …etc.
+            .service(
+                web::scope("/upload")
+                    .configure(files::configure_upload)
+                    .configure(resumable_upload::configure_resumable),
+            )
+            // Download pipeline:
+            //   GET  /api/v1/download/{id}           — authenticated full/range download
+            //   GET  /api/v1/download/t/{token}       — token-authenticated download
+            //   POST /api/v1/download/{id}/token      — issue a download token
+            .service(
+                web::scope("/download")
+                    .configure(download_token::configure_token)
+                    .configure(files::configure_download),
+            )
             // Admin operations (Owner / Admin role required per-handler).
             .service(web::scope("/admin").configure(admin::configure))
             // GET /api/v1/events  — SSE real-time push stream

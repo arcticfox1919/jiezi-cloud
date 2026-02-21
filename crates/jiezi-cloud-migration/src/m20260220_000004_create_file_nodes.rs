@@ -118,7 +118,7 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum FileNodes {
+pub enum FileNodes {
     Table,
     Id,
     ParentId,
