@@ -35,5 +35,8 @@ config/local.toml
 # Temporary files
 build_output.txt
 
+# Test runtime data (SQLite DBs, upload tmp dirs, etc.)
+**/test-tmp/
+
 # Local Copilot instructions (personal, not shared with the team)
 .github/copilot-instructions.md
