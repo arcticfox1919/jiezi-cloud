@@ -8,29 +8,35 @@
 //! in-memory [`ChannelTransport`] and later reused for the WebSocket fallback
 //! without any duplication.
 //!
+//! # Control stream writer
+//!
+//! All writes to the control QUIC stream are serialised through a
+//! [`ControlSender`] (mpsc channel → dedicated writer task).  This eliminates
+//! lock contention from the previous `Arc<Mutex<SendStream>>` design and
+//! guarantees frames are never interleaved.
+//!
 //! # WebSocket fallback
 //!
-//! Drop-in: implement [`JtpTransport`] for a WebSocket sink/stream, then call:
-//! ```text
-//! handle_jtp_session(ws_transport, ctl_send, conn, state).await
-//! ```
+//! The WebSocket path has its own `run_ws_session` function that handles
+//! inline chunk data and streaming downloads directly on the single ordered
+//! connection.
 //!
 //! # Clone usage rationale
 //!
-//! All `.clone()` calls below operate on `Arc<T>` — one atomic ref-count
-//! increment, no allocation.
+//! All `.clone()` calls below operate on `Arc<T>` or [`ControlSender`] —
+//! one atomic ref-count increment or mpsc sender clone, no allocation.
 //!
 //! | Cloned value             | Reason                                              |
 //! |--------------------------|-----------------------------------------------------|
 //! | `Arc<SessionManager>`    | Shared by control loop + chunk tasks                |
-//! | `Arc<Mutex<SendStream>>` | Multiple tasks write COMPLETE/PROGRESS concurrently |
+//! | `ControlSender`          | Multiple tasks write frames via mpsc channel         |
 //! | `quinn::Connection`      | Connection is internally an `Arc`                   |
 //! | `UploadService`          | Wraps `Arc<DB>`; only what chunk tasks need         |
 
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use tokio::sync::Mutex;
+use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -51,7 +57,7 @@ use jiezi_cloud_storage::UploadService;
 use crate::state::AppState;
 
 use super::download::{run_download_session, DEFAULT_MAX_CHUNK_BYTES};
-use super::io::{write_frame, QuicControlTransport};
+use super::io::{ControlSender, QuicControlTransport};
 use super::session::SessionManager;
 use super::upload::handle_upload_chunk;
 
@@ -74,9 +80,9 @@ async fn do_handle_connection(conn: quinn::Connection, state: AppState) -> Resul
         .map_err(|e| anyhow::anyhow!("control stream accept failed: {e}"))?;
 
     let mut transport = QuicControlTransport::new(ctl_send, ctl_recv);
-    let ctl_send      = transport.shared_send();
+    let ctl_sender    = transport.shared_sender();
 
-    handle_jtp_session(&mut transport, ctl_send, &conn, &state).await
+    handle_jtp_session(&mut transport, ctl_sender, &conn, &state).await
 }
 
 // ─── Transport-generic session handler ───────────────────────────────────────
@@ -88,7 +94,7 @@ async fn do_handle_connection(conn: quinn::Connection, state: AppState) -> Resul
 /// browser/firewall-restricted clients.
 pub async fn handle_jtp_session<T: JtpTransport>(
     transport: &mut T,
-    ctl_send: Arc<Mutex<quinn::SendStream>>,
+    ctl_sender: ControlSender,
     conn: &quinn::Connection,
     state: &AppState,
 ) -> Result<()> {
@@ -98,13 +104,16 @@ pub async fn handle_jtp_session<T: JtpTransport>(
     // dispatch loop.  QUIC returns 8; WebSocket / test channels return 1.
     let parallel_streams = transport.max_parallel_streams();
 
-    let session_mgr = SessionManager::new();
+    let session_mgr = Arc::new(SessionManager::new());
+
+    // Start the garbage-collection background task.
+    session_mgr.spawn_gc();
 
     {
         let conn2      = conn.clone();
         let mgr2       = session_mgr.clone();
         let upload_svc = state.upload.clone();
-        let ctl2       = ctl_send.clone();
+        let ctl2       = ctl_sender.clone();
         tokio::spawn(async move {
             accept_chunk_streams(conn2, mgr2, upload_svc, ctl2).await;
         });
@@ -124,11 +133,10 @@ pub async fn handle_jtp_session<T: JtpTransport>(
         };
 
         if let Err(e) =
-            dispatch_control_frame(frame, conn, &ctl_send, &session_mgr, state, parallel_streams).await
+            dispatch_control_frame(frame, conn, &ctl_sender, &session_mgr, state, parallel_streams).await
         {
             warn!("dispatch error: {e}; closing connection");
-            let mut s = ctl_send.lock().await;
-            let _ = write_frame(&mut *s, &Frame::Error(ErrorFrame {
+            let _ = ctl_sender.send_frame(&Frame::Error(ErrorFrame {
                 session_id: Uuid::nil(),
                 code: ErrorCode::Internal,
                 message: e.to_string(),
@@ -191,7 +199,7 @@ pub async fn perform_handshake<T: JtpTransport>(
 async fn dispatch_control_frame(
     frame: Frame,
     conn: &quinn::Connection,
-    ctl_send: &Arc<Mutex<quinn::SendStream>>,
+    ctl_sender: &ControlSender,
     session_mgr: &Arc<SessionManager>,
     state: &AppState,
     parallel_streams: u8,
@@ -225,8 +233,7 @@ async fn dispatch_control_frame(
                 parallel_streams,
                 window_size: 16,
             });
-            let mut s = ctl_send.lock().await;
-            write_frame(&mut *s, &accept).await?;
+            ctl_sender.send_frame(&accept).await?;
         }
 
         // ── Download request ──────────────────────────────────────────────────
@@ -235,14 +242,13 @@ async fn dispatch_control_frame(
             let file_node_id = req.file_node_id;
             let file_id      = FileId::from(file_node_id);
 
-            // Read the full file content synchronously so we can send
-            // accurate DOWNLOAD_INFO metadata before streaming begins.
-            let file_bytes = state.download.read_file(&file_id).await
-                .map_err(|e| anyhow::anyhow!("read_file({file_node_id}): {e}"))?;
+            // Stream the file content — only metadata is loaded eagerly.
+            let stream = state.download.stream_file(&file_id).await
+                .map_err(|e| anyhow::anyhow!("stream_file({file_node_id}): {e}"))?;
 
-            let total_size = file_bytes.len() as u64;
-            let max_chunk  = DEFAULT_MAX_CHUNK_BYTES;
-            let chunk_count = ((file_bytes.len() + max_chunk - 1) / max_chunk.max(1)) as u32;
+            let total_size  = stream.meta.total_size;
+            let max_chunk   = DEFAULT_MAX_CHUNK_BYTES;
+            let chunk_count = ((total_size as usize + max_chunk - 1) / max_chunk.max(1)) as u32;
 
             session_mgr.insert_download(session_id, file_node_id, total_size, chunk_count)
                 .map_err(|e| anyhow::anyhow!("insert_download failed: {:?}", e))?;
@@ -255,18 +261,16 @@ async fn dispatch_control_frame(
                 mime_type: "application/octet-stream".into(),
                 parallel_streams,
             });
-            {
-                let mut s = ctl_send.lock().await;
-                write_frame(&mut *s, &info).await?;
-            }
+            ctl_sender.send_frame(&info).await?;
 
-            // Spawn the download session task.
-            let conn2      = conn.clone();
-            let ctl2       = ctl_send.clone();
-            let mgr2       = session_mgr.clone();
+            // Spawn the streaming download session task.
+            let conn2  = conn.clone();
+            let ctl2   = ctl_sender.clone();
+            let mgr2   = session_mgr.clone();
             tokio::spawn(async move {
                 run_download_session(
-                    conn2, ctl2, session_id, file_node_id, file_bytes, max_chunk, mgr2,
+                    conn2, ctl2, session_id, file_node_id,
+                    stream.rx, total_size, max_chunk, mgr2,
                 ).await;
             });
         }
@@ -285,8 +289,7 @@ async fn dispatch_control_frame(
         // ── Keepalive ─────────────────────────────────────────────────────────
         Frame::Ping(p) => {
             let pong = Frame::Pong(PingFrame { nonce: p.nonce });
-            let mut s = ctl_send.lock().await;
-            write_frame(&mut *s, &pong).await?;
+            ctl_sender.send_frame(&pong).await?;
         }
 
         unexpected => {
@@ -308,14 +311,14 @@ async fn accept_chunk_streams(
     conn: quinn::Connection,
     session_mgr: Arc<SessionManager>,
     upload_svc: UploadService,
-    ctl_send: Arc<Mutex<quinn::SendStream>>,
+    ctl_sender: ControlSender,
 ) {
     loop {
         match conn.accept_bi().await {
             Ok((send, recv)) => {
                 let mgr  = session_mgr.clone();
                 let svc  = upload_svc.clone();
-                let ctrl = ctl_send.clone();
+                let ctrl = ctl_sender.clone();
                 tokio::spawn(async move {
                     if let Some((session_id, _chunk_index, _bytes, all_done)) =
                         handle_upload_chunk(send, recv, mgr.clone()).await
@@ -338,17 +341,37 @@ async fn accept_chunk_streams(
     }
 }
 
-/// Reassemble buffered chunks, persist via `UploadService`, and send `COMPLETE`.
+/// Reassemble buffered chunks, verify content hash, persist via
+/// `UploadService`, and send `COMPLETE`.
 async fn finalize_upload(
     session_id: Uuid,
     session_mgr: Arc<SessionManager>,
     upload_svc: UploadService,
-    ctl_send: Arc<Mutex<quinn::SendStream>>,
+    ctl_sender: ControlSender,
 ) {
-    let Some((file_name, assembled_bytes, _hash)) = session_mgr.take_assembled(session_id) else {
+    let Some((file_name, assembled_bytes, expected_hash)) = session_mgr.take_assembled(session_id) else {
         warn!(session_id = %session_id, "finalize_upload called but session not complete");
         return;
     };
+
+    // ── Verify content hash ───────────────────────────────────────────────────
+    let computed = Sha256::digest(&assembled_bytes);
+    if computed.as_slice() != expected_hash {
+        let msg = format!(
+            "content hash mismatch: expected {}, computed {}",
+            hex::encode(expected_hash),
+            hex::encode(computed),
+        );
+        warn!(session_id = %session_id, "{msg}");
+        session_mgr.mark_cancelled(session_id, &msg);
+        let err = Frame::Error(ErrorFrame {
+            session_id,
+            code: ErrorCode::ChecksumMismatch,
+            message: msg,
+        });
+        let _ = ctl_sender.send_frame(&err).await;
+        return;
+    }
 
     let file_id  = FileId::new();
     let policy   = ReplicationPolicy::default();
@@ -364,8 +387,7 @@ async fn finalize_upload(
                 "upload complete"
             );
             let complete = Frame::Complete(CompleteFrame { session_id, file_node_id });
-            let mut s = ctl_send.lock().await;
-            let _ = write_frame(&mut *s, &complete).await;
+            let _ = ctl_sender.send_frame(&complete).await;
         }
         Err(e) => {
             warn!(session_id = %session_id, "store_file failed: {e}");
@@ -375,8 +397,7 @@ async fn finalize_upload(
                 code: ErrorCode::Internal,
                 message: e.to_string(),
             });
-            let mut s = ctl_send.lock().await;
-            let _ = write_frame(&mut *s, &err).await;
+            let _ = ctl_sender.send_frame(&err).await;
         }
     }
 }
@@ -466,7 +487,8 @@ pub async fn run_ws_session(
 ///
 /// Similar to [`dispatch_control_frame`] but handles chunk data inline (no
 /// independent QUIC streams) and sends download chunks inline rather than
-/// via a spawned task.
+/// via a spawned task.  Uses streaming I/O for downloads so memory stays
+/// bounded even for large files.
 async fn dispatch_ws_frame(
     frame: Frame,
     transport: &mut crate::ws::WsTransport,
@@ -524,9 +546,27 @@ async fn dispatch_ws_frame(
                 ok: true,
             })).await?;
 
-            // If all chunks received, finalise the upload.
+            // If all chunks received, verify hash and finalise the upload.
             if all_done {
-                if let Some((file_name, assembled, _hash)) = session_mgr.take_assembled(session_id) {
+                if let Some((file_name, assembled, expected_hash)) = session_mgr.take_assembled(session_id) {
+                    // Verify content hash before persisting.
+                    let computed = Sha256::digest(&assembled);
+                    if computed.as_slice() != expected_hash {
+                        let msg = format!(
+                            "content hash mismatch: expected {}, computed {}",
+                            hex::encode(expected_hash),
+                            hex::encode(computed),
+                        );
+                        warn!(session_id = %session_id, "{msg}");
+                        session_mgr.mark_cancelled(session_id, &msg);
+                        transport.send(&Frame::Error(ErrorFrame {
+                            session_id,
+                            code: ErrorCode::ChecksumMismatch,
+                            message: msg,
+                        })).await?;
+                        return Ok(());
+                    }
+
                     let file_id = FileId::new();
                     match state.upload.store_file(&file_id, assembled, &ReplicationPolicy::default()).await {
                         Ok(_) => {
@@ -562,12 +602,13 @@ async fn dispatch_ws_frame(
             let file_node_id = req.file_node_id;
             let file_id      = FileId::from(file_node_id);
 
-            let file_bytes = state.download.read_file(&file_id).await
-                .map_err(|e| anyhow::anyhow!("read_file({file_node_id}): {e}"))?;
+            // Use streaming I/O — only one CDC chunk in memory at a time.
+            let mut stream = state.download.stream_file(&file_id).await
+                .map_err(|e| anyhow::anyhow!("stream_file({file_node_id}): {e}"))?;
 
-            let total_size  = file_bytes.len() as u64;
+            let total_size  = stream.meta.total_size;
             let max_chunk   = DEFAULT_MAX_CHUNK_BYTES;
-            let chunk_count = ((file_bytes.len() + max_chunk - 1) / max_chunk.max(1)) as u32;
+            let chunk_count = ((total_size as usize + max_chunk - 1) / max_chunk.max(1)) as u32;
 
             session_mgr.insert_download(session_id, file_node_id, total_size, chunk_count)
                 .map_err(|e| anyhow::anyhow!("insert_download failed: {:?}", e))?;
@@ -580,14 +621,38 @@ async fn dispatch_ws_frame(
                 parallel_streams,
             })).await?;
 
-            // Send all chunks inline (no QUIC streams available).
-            for (index, chunk) in file_bytes.chunks(max_chunk).enumerate() {
-                let byte_offset = (index * max_chunk) as u64;
+            // Stream download: buffer CDC chunks → re-chunk into JTP chunks
+            // and send inline.  Peak memory ≈ max_chunk (4 MiB).
+            let mut buffer = bytes::BytesMut::with_capacity(max_chunk);
+            let mut jtp_index: u32 = 0;
+            let mut byte_offset: u64 = 0;
+
+            while let Some(result) = stream.rx.recv().await {
+                let cdc_chunk = result
+                    .map_err(|e| anyhow::anyhow!("storage read error: {e}"))?;
+                buffer.extend_from_slice(&cdc_chunk);
+
+                while buffer.len() >= max_chunk {
+                    let data = buffer.split_to(max_chunk).freeze();
+                    transport.send(&Frame::ChunkData(jiezi_cloud_core::protocol::frames::ChunkDataFrame {
+                        session_id,
+                        chunk_index: jtp_index,
+                        byte_offset,
+                        data,
+                    })).await?;
+                    byte_offset += max_chunk as u64;
+                    jtp_index += 1;
+                }
+            }
+
+            // Flush remaining bytes.
+            if !buffer.is_empty() {
+                let data = buffer.freeze();
                 transport.send(&Frame::ChunkData(jiezi_cloud_core::protocol::frames::ChunkDataFrame {
                     session_id,
-                    chunk_index: index as u32,
+                    chunk_index: jtp_index,
                     byte_offset,
-                    data: bytes::Bytes::copy_from_slice(chunk),
+                    data,
                 })).await?;
             }
 

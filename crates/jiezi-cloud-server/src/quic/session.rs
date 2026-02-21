@@ -19,8 +19,13 @@
 //!
 //! # Concurrency
 //!
-//! Separate `DashMap`s for upload, download and terminal states avoid holding
-//! a write lock while processing chunk data.  Share via `Arc<SessionManager>`.
+//! A single `DashMap` houses all session states.  `DashMap` uses lock-striping
+//! so independent sessions never contend.  Share via `Arc<SessionManager>`.
+//!
+//! # Garbage collection
+//!
+//! Call [`SessionManager::spawn_gc`] once per connection to start a background
+//! task that periodically reaps completed / stalled sessions.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -28,6 +33,8 @@ use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
+use tokio::time;
+use tracing::debug;
 use uuid::Uuid;
 
 use jiezi_cloud_core::protocol::frames::ErrorCode;
@@ -107,12 +114,32 @@ const TTL_SECS: u64 = 120;
 /// How long to keep stalled (incomplete) upload sessions before GC.
 const UPLOAD_STALL_SECS: u64 = 600;
 
+/// GC cycle interval.
+const GC_INTERVAL: Duration = Duration::from_secs(60);
+
 impl SessionManager {
     /// Create an empty session manager.
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new() -> Self {
+        Self {
             sessions: DashMap::new(),
-        })
+        }
+    }
+
+    /// Spawn a background task that periodically garbage-collects expired
+    /// sessions.  The task stops automatically when the `Arc` is the last
+    /// remaining reference (i.e. the connection has been dropped).
+    pub fn spawn_gc(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let mut interval = time::interval(GC_INTERVAL);
+            loop {
+                interval.tick().await;
+                match weak.upgrade() {
+                    Some(mgr) => mgr.gc(),
+                    None => break, // SessionManager dropped — stop GC.
+                }
+            }
+        });
     }
 
     // ── Insert helpers ────────────────────────────────────────────────────────
@@ -122,7 +149,7 @@ impl SessionManager {
     /// Returns `Err(ErrorCode::AlreadyExists)` if the session ID is already
     /// known (active or recently completed).
     pub fn insert_upload(
-        self: &Arc<Self>,
+        &self,
         session_id: Uuid,
         file_name: String,
         total_size: u64,
@@ -151,7 +178,7 @@ impl SessionManager {
     /// Returns `Err(ErrorCode::AlreadyExists)` if the session ID is already
     /// known.
     pub fn insert_download(
-        self: &Arc<Self>,
+        &self,
         session_id: Uuid,
         file_node_id: Uuid,
         total_size: u64,
@@ -200,23 +227,23 @@ impl SessionManager {
         }
     }
 
-    /// Take the assembled file bytes out of a completed upload session.
+    /// Atomically remove a completed upload session and return its assembled
+    /// file bytes.
+    ///
+    /// Uses [`DashMap::remove_if`] to avoid the TOCTOU race between checking
+    /// completion and removing the entry — no other task can sneak in between.
     ///
     /// Returns `None` if the session is not found, not an upload, or not yet
-    /// complete.  On success, the session is removed from the upload map
-    /// (caller must call `mark_completed` or `mark_cancelled` later).
+    /// complete.
     pub fn take_assembled(
         &self,
         session_id: Uuid,
     ) -> Option<(String, Bytes, [u8; 32])> {
-        // Peek first to avoid removing an incomplete session.
-        let complete = self.sessions.get(&session_id)
-            .map(|s| (*s).is_upload_complete())
-            .unwrap_or(false);
-        if !complete {
-            return None;
-        }
-        let (_, state) = self.sessions.remove(&session_id)?;
+        // Atomic check-and-remove: only removes if the upload is complete.
+        let (_, state) = self
+            .sessions
+            .remove_if(&session_id, |_, s| s.is_upload_complete())?;
+
         if let SessionState::Uploading { file_name, received_chunks, content_hash, .. } = state {
             let total: usize = received_chunks.values().map(|b| b.len()).sum();
             let mut buf = BytesMut::with_capacity(total);
@@ -321,16 +348,21 @@ impl SessionManager {
     // ── Garbage collection ────────────────────────────────────────────────────
 
     /// Reap terminal sessions older than [`TTL_SECS`] and stalled upload
-    /// sessions older than [`UPLOAD_STALL_SECS`].  Call periodically (~60 s).
-    pub fn gc(&self) {
+    /// sessions older than [`UPLOAD_STALL_SECS`].
+    fn gc(&self) {
         let terminal_cutoff = Duration::from_secs(TTL_SECS);
         let stall_cutoff    = Duration::from_secs(UPLOAD_STALL_SECS);
+        let before = self.sessions.len();
         self.sessions.retain(|_, state| match state {
             SessionState::Completed { completed_at, .. } => completed_at.elapsed() < terminal_cutoff,
             SessionState::Cancelled { cancelled_at, .. } => cancelled_at.elapsed() < terminal_cutoff,
             SessionState::Uploading  { created_at, .. }  => created_at.elapsed() < stall_cutoff,
             SessionState::Downloading { created_at, .. } => created_at.elapsed() < stall_cutoff,
         });
+        let reaped = before - self.sessions.len();
+        if reaped > 0 {
+            debug!(reaped, remaining = self.sessions.len(), "session GC cycle");
+        }
     }
 
     /// Returns the number of currently active sessions.
@@ -341,6 +373,6 @@ impl SessionManager {
 
 impl Default for SessionManager {
     fn default() -> Self {
-        Self { sessions: DashMap::new() }
+        Self::new()
     }
 }

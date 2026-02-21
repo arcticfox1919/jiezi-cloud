@@ -3,6 +3,12 @@
 //! [`DownloadService`] reads `file_chunks` rows, resolves each chunk from the
 //! [`StorageManager`], and reassembles the original byte stream.
 //!
+//! # Streaming
+//!
+//! [`DownloadService::stream_file`] returns a [`FileDownloadStream`] that
+//! yields CDC chunks one at a time via an mpsc channel. Peak memory stays
+//! O(CDC_chunk) ≈ 16 KiB rather than O(file_size).
+//!
 //! # Range reads
 //!
 //! [`DownloadService::read_range`] computes byte-range boundaries from the
@@ -13,6 +19,7 @@ use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use tokio::sync::mpsc;
 
 use jiezi_cloud_core::{
     error::{AppError, AppResult},
@@ -26,6 +33,27 @@ use crate::{
 };
 
 // ─── DownloadService ──────────────────────────────────────────────────────────
+
+/// Metadata needed to start a download session (e.g. `DOWNLOAD_INFO` frame)
+/// before the first chunk arrives.
+pub struct FileDownloadMeta {
+    /// Total file size in bytes (sum of all CDC chunk sizes).
+    pub total_size: u64,
+    /// Number of CDC storage chunks that make up the file.
+    pub chunk_count: u32,
+}
+
+/// A streaming handle to a file's content.
+///
+/// CDC chunks are yielded one at a time through a bounded mpsc channel.
+/// The producer task runs in the background so the consumer can buffer or
+/// re-chunk at its own pace.
+pub struct FileDownloadStream {
+    /// Metadata about the file (available immediately, before any I/O).
+    pub meta: FileDownloadMeta,
+    /// Receiver end — each message is one CDC chunk (`Bytes`).
+    pub rx: mpsc::Receiver<AppResult<Bytes>>,
+}
 
 /// Reassembles file content from chunk records and storage backends.
 #[derive(Clone)]
@@ -141,6 +169,67 @@ impl DownloadService {
         }
 
         Ok(buf.freeze())
+    }
+
+    /// Return file metadata (total_size and chunk_count) without loading any
+    /// chunk data.
+    ///
+    /// Useful when sending `DOWNLOAD_INFO` frames where the caller only needs
+    /// size/count but will stream the actual data separately.
+    pub async fn file_metadata(&self, file_id: &FileId) -> AppResult<FileDownloadMeta> {
+        let chunks = self.load_chunk_list(file_id).await?;
+        if chunks.is_empty() {
+            return Err(AppError::NotFound(format!(
+                "no chunks found for file {file_id}"
+            )));
+        }
+        let total_size: u64 = chunks.iter().map(|c| c.size_bytes as u64).sum();
+        Ok(FileDownloadMeta {
+            total_size,
+            chunk_count: chunks.len() as u32,
+        })
+    }
+
+    /// Stream the file content as a series of CDC chunks.
+    ///
+    /// Returns immediately with a [`FileDownloadStream`] containing metadata
+    /// and a receiver.  A background task sequentially loads each CDC chunk
+    /// from storage and sends it through the channel.
+    ///
+    /// The channel buffer of 4 keeps memory usage bounded to approximately
+    /// 4 × max_CDC_size ≈ 64 KiB regardless of file size.
+    ///
+    /// # Errors
+    ///
+    /// - [`AppError::NotFound`] if `file_id` has no chunks.
+    pub async fn stream_file(&self, file_id: &FileId) -> AppResult<FileDownloadStream> {
+        let chunks = self.load_chunk_list(file_id).await?;
+        if chunks.is_empty() {
+            return Err(AppError::NotFound(format!(
+                "no chunks found for file {file_id}"
+            )));
+        }
+
+        let total_size: u64 = chunks.iter().map(|c| c.size_bytes as u64).sum();
+        let chunk_count = chunks.len() as u32;
+
+        let (tx, rx) = mpsc::channel(4);
+        let storage = Arc::clone(&self.storage);
+
+        tokio::spawn(async move {
+            for chunk in chunks {
+                let key = chunk_key(&chunk.chunk_hash);
+                let result = storage.get_from_any(&key).await;
+                if tx.send(result).await.is_err() {
+                    break; // Receiver dropped — stop producing.
+                }
+            }
+        });
+
+        Ok(FileDownloadStream {
+            meta: FileDownloadMeta { total_size, chunk_count },
+            rx,
+        })
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

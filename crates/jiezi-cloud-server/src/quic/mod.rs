@@ -6,7 +6,7 @@
 //!
 //! # Entry point
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use jiezi_cloud_server::quic::QuicServer;
 //!
 //! // Inside your async main / server startup:

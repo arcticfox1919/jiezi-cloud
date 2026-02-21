@@ -2,25 +2,31 @@
 //!
 //! For each download session, the server:
 //!
-//! 1. Reads all file bytes via [`DownloadService::read_file`].
-//! 2. Slices the bytes into fixed-size chunks (≤ `max_chunk_bytes` from config,
-//!    defaults to 4 MiB).
-//! 3. Sends `DOWNLOAD_INFO` on the control stream (total_size, chunk_count).
-//! 4. Opens one server-initiated unidirectional QUIC stream per chunk and
-//!    sends `CHUNK_DATA` on each.
+//! 1. Obtains a [`FileDownloadStream`] from `DownloadService::stream_file`.
+//! 2. Sends `DOWNLOAD_INFO` on the control stream (total_size, chunk_count).
+//! 3. Buffers incoming CDC chunks into 4 MiB JTP chunks (re-chunking).
+//! 4. Opens one server-initiated unidirectional QUIC stream per JTP chunk
+//!    and sends `CHUNK_DATA` on each.
 //! 5. Sends `DOWNLOAD_COMPLETE` on the control stream.
 //!
-//! # Parallel chunk streaming
+//! # Memory model
 //!
-//! Chunks are opened with bounded concurrency (default 8 parallel streams) so
-//! the server does not open hundreds of streams at once for large files.
+//! Peak memory ≈ `DOWNLOAD_CONCURRENCY × max_chunk_bytes` ≈ 32 MiB, regardless
+//! of file size.  CDC chunks arrive through an mpsc channel (back-pressured)
+//! and are re-chunked into fixed-size JTP chunks using a single `BytesMut`
+//! accumulator.
+//!
+//! # Zero-copy
+//!
+//! When a JTP chunk is exactly one contiguous region in `Bytes`, it is sent
+//! directly via `Bytes::slice` — no copy.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use bytes::Bytes;
-use tokio::sync::{Mutex, Semaphore};
+use bytes::{Bytes, BytesMut};
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -29,7 +35,7 @@ use jiezi_cloud_core::protocol::{
     frames::{ChunkDataFrame, DownloadCompleteFrame, ErrorCode, ErrorFrame, ProgressFrame},
 };
 
-use super::io::write_frame;
+use super::io::ControlSender;
 use super::session::SessionManager;
 
 /// Maximum number of chunk streams open simultaneously per download session.
@@ -43,21 +49,23 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
 
 // ─── Download session entry point ─────────────────────────────────────────────
 
-/// Drive one complete download session to completion.
+/// Drive one complete download session to completion using streaming I/O.
 ///
 /// - `conn`          — the QUIC connection (for opening uni streams).
-/// - `ctrl_send`     — locked send half of the control stream.
+/// - `ctrl_send`     — mpsc-based control frame sender.
 /// - `session_id`    — session identifier.
 /// - `file_node_id`  — VFS node being downloaded.
-/// - `file_bytes`    — **entire file content**, already loaded by the caller.
+/// - `chunk_rx`      — receiver of CDC chunks from [`DownloadService::stream_file`].
+/// - `total_size`    — total file size in bytes.
 /// - `max_chunk`     — maximum bytes per JTP/1 chunk.
 /// - `session_mgr`   — shared session state.
 pub async fn run_download_session(
     conn: quinn::Connection,
-    ctrl_send: Arc<Mutex<quinn::SendStream>>,
+    ctrl_send: ControlSender,
     session_id: Uuid,
     file_node_id: Uuid,
-    file_bytes: Bytes,
+    chunk_rx: mpsc::Receiver<jiezi_cloud_core::error::AppResult<Bytes>>,
+    total_size: u64,
     max_chunk: usize,
     session_mgr: Arc<SessionManager>,
 ) {
@@ -66,7 +74,8 @@ pub async fn run_download_session(
         ctrl_send.clone(),
         session_id,
         file_node_id,
-        file_bytes,
+        chunk_rx,
+        total_size,
         max_chunk,
         session_mgr.clone(),
     )
@@ -80,59 +89,61 @@ pub async fn run_download_session(
             code: ErrorCode::Internal,
             message: e.to_string(),
         });
-        let mut ctrl = ctrl_send.lock().await;
-        let _ = write_frame(&mut *ctrl, &err_frame).await;
+        let _ = ctrl_send.send_frame(&err_frame).await;
     }
 }
 
 async fn do_download(
     conn: quinn::Connection,
-    ctrl_send: Arc<Mutex<quinn::SendStream>>,
+    ctrl_send: ControlSender,
     session_id: Uuid,
     file_node_id: Uuid,
-    file_bytes: Bytes,
+    mut chunk_rx: mpsc::Receiver<jiezi_cloud_core::error::AppResult<Bytes>>,
+    total_size: u64,
     max_chunk: usize,
     session_mgr: Arc<SessionManager>,
 ) -> Result<()> {
-    // ── Slice into chunks ─────────────────────────────────────────────────────
-    let total_size = file_bytes.len() as u64;
     let chunk_size = max_chunk.max(1);
-    let chunks: Vec<(u32, u64, Bytes)> = file_bytes
-        .chunks(chunk_size)
-        .enumerate()
-        .map(|(i, slice)| {
-            let offset = (i * chunk_size) as u64;
-            // `slice` is a `&[u8]` from chunks(); copy into Bytes.
-            (i as u32, offset, Bytes::copy_from_slice(slice))
-        })
-        .collect();
-
-    let chunk_count = chunks.len() as u32;
 
     info!(
         session_id = %session_id,
         total_bytes = total_size,
-        chunk_count,
-        "starting download session"
+        "starting streaming download session"
     );
 
-    // ── Stream chunks with bounded concurrency ────────────────────────────────
+    // ── Streaming re-chunk: buffer CDC chunks → emit fixed JTP chunks ─────────
     let sem = Arc::new(Semaphore::new(DOWNLOAD_CONCURRENCY));
     let mut tasks = tokio::task::JoinSet::new();
     let mut last_progress = Instant::now();
 
-    for (chunk_index, byte_offset, data) in chunks {
-        let permit = sem.clone().acquire_owned().await?;
-        let conn2 = conn.clone();
-        let sid = session_id;
+    let mut buffer = BytesMut::with_capacity(chunk_size);
+    let mut jtp_index: u32 = 0;
+    let mut byte_offset: u64 = 0;
 
-        tasks.spawn(async move {
-            let result = send_chunk_stream(conn2, sid, chunk_index, byte_offset, data).await;
-            drop(permit);
-            result
-        });
+    while let Some(result) = chunk_rx.recv().await {
+        let cdc_chunk = result.map_err(|e| anyhow::anyhow!("storage read error: {e}"))?;
+        buffer.extend_from_slice(&cdc_chunk);
 
-        // Emit progress update on the control stream.
+        // Emit full JTP-sized chunks as they accumulate.
+        while buffer.len() >= chunk_size {
+            let data = buffer.split_to(chunk_size).freeze();
+            let permit = sem.clone().acquire_owned().await?;
+            let conn2 = conn.clone();
+            let sid = session_id;
+            let idx = jtp_index;
+            let off = byte_offset;
+
+            tasks.spawn(async move {
+                let result = send_chunk_stream(conn2, sid, idx, off, data).await;
+                drop(permit);
+                result
+            });
+
+            byte_offset += chunk_size as u64;
+            jtp_index += 1;
+        }
+
+        // Emit progress periodically.
         if last_progress.elapsed() >= PROGRESS_INTERVAL {
             if let Some((chunks_sent, bytes_sent)) = session_mgr.download_progress(session_id) {
                 let progress = Frame::Progress(ProgressFrame {
@@ -140,14 +151,29 @@ async fn do_download(
                     bytes_done: bytes_sent,
                     chunks_done: chunks_sent,
                 });
-                let mut ctrl = ctrl_send.lock().await;
-                let _ = write_frame(&mut *ctrl, &progress).await;
+                let _ = ctrl_send.send_frame(&progress).await;
             }
             last_progress = Instant::now();
         }
     }
 
-    // Wait for all chunk tasks.
+    // Flush remaining bytes as the last (potentially smaller) JTP chunk.
+    if !buffer.is_empty() {
+        let data = buffer.freeze();
+        let permit = sem.clone().acquire_owned().await?;
+        let conn2 = conn.clone();
+        let sid = session_id;
+        let idx = jtp_index;
+        let off = byte_offset;
+
+        tasks.spawn(async move {
+            let result = send_chunk_stream(conn2, sid, idx, off, data).await;
+            drop(permit);
+            result
+        });
+    }
+
+    // Wait for all chunk-send tasks.
     while let Some(result) = tasks.join_next().await {
         match result {
             Ok(Ok(bytes)) => {
@@ -160,10 +186,7 @@ async fn do_download(
 
     // ── Send DOWNLOAD_COMPLETE ────────────────────────────────────────────────
     let complete = Frame::DownloadComplete(DownloadCompleteFrame { session_id });
-    {
-        let mut ctrl = ctrl_send.lock().await;
-        write_frame(&mut *ctrl, &complete).await?;
-    }
+    ctrl_send.send_frame(&complete).await?;
 
     session_mgr.mark_completed(session_id, file_node_id);
     info!(session_id = %session_id, "download session complete");
@@ -188,3 +211,6 @@ async fn send_chunk_stream(
     debug!(session_id = %session_id, chunk_index, bytes = data_len, "sent chunk on uni stream");
     Ok(data_len)
 }
+
+// Re-import write_frame for use in send_chunk_stream.
+use super::io::write_frame;

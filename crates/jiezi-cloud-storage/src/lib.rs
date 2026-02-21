@@ -44,6 +44,7 @@ pub mod webdav;
 
 // Convenience re-exports
 pub use download::DownloadService;
+pub use download::{FileDownloadMeta, FileDownloadStream};
 pub use local::LocalFsBackend;
 pub use manager::StorageManager;
 pub use s3::S3Backend;

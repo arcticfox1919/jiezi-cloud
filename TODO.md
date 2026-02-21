@@ -268,7 +268,7 @@
 
 ## Ongoing / Cross-Cutting
 
-- [ ] Unit test coverage ≥ 85% overall (targets per crate in `工程实施文档.md` Appendix A)
+- [ ] Unit test coverage ≥ 85% overall 
 - [ ] `cargo clippy -- -D warnings` clean on CI
 - [ ] `cargo fmt --check` enforced on CI
 - [ ] API contract documented (OpenAPI / manual)
