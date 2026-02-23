@@ -12,6 +12,9 @@
 
 pub mod auth;
 pub mod cache;
+pub mod embedding;
+pub mod file_content;
+pub mod kb;
 pub mod search;
 pub mod storage;
 pub mod vfs;

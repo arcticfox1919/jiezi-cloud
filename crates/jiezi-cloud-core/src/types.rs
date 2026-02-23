@@ -100,6 +100,11 @@ newtype_uuid_id!(
     TaskId
 );
 
+newtype_uuid_id!(
+    /// Identifies a knowledge-base note record (application-layer, above VFS).
+    KbNoteId
+);
+
 // ─── Non-UUID ID types ────────────────────────────────────────────────────────
 
 /// Identifier for a physical storage backend (human-readable slug).

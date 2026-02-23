@@ -107,3 +107,32 @@ pub trait SearchEngine: Send + Sync {
     /// - [`AppError::Internal`] on index errors.
     async fn rebuild_index(&self) -> AppResult<()>;
 }
+
+// ─── NoopSearchEngine ─────────────────────────────────────────────────────────
+
+/// A no-op [`SearchEngine`] that silently discards all operations.
+///
+/// Useful for running the server before a concrete search backend is
+/// configured, and in integration tests that are not exercising search
+/// functionality.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoopSearchEngine;
+
+#[async_trait]
+impl SearchEngine for NoopSearchEngine {
+    async fn index_document(&self, _doc: SearchDocument) -> AppResult<()> {
+        Ok(())
+    }
+
+    async fn search(&self, query: &SearchQuery) -> AppResult<SearchResult> {
+        Ok(SearchResult::new(vec![], 0, query.page, query.per_page))
+    }
+
+    async fn delete_document(&self, _id: &FileId) -> AppResult<()> {
+        Ok(())
+    }
+
+    async fn rebuild_index(&self) -> AppResult<()> {
+        Ok(())
+    }
+}

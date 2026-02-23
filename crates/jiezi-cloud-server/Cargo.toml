@@ -21,9 +21,9 @@ path = "src/lib.rs"
 #   MySQL      (prod): cargo build --no-default-features --features db-mysql
 [features]
 default     = ["db-sqlite"]
-db-sqlite   = ["jiezi-cloud-auth/db-sqlite",   "jiezi-cloud-vfs/db-sqlite",   "jiezi-cloud-storage/db-sqlite",   "jiezi-cloud-migration/db-sqlite"]
-db-postgres = ["jiezi-cloud-auth/db-postgres", "jiezi-cloud-vfs/db-postgres", "jiezi-cloud-storage/db-postgres", "jiezi-cloud-migration/db-postgres"]
-db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-vfs/db-mysql",    "jiezi-cloud-storage/db-mysql",    "jiezi-cloud-migration/db-mysql"]
+db-sqlite   = ["jiezi-cloud-auth/db-sqlite",   "jiezi-cloud-vfs/db-sqlite",   "jiezi-cloud-storage/db-sqlite",   "jiezi-cloud-migration/db-sqlite",   "jiezi-cloud-kb/db-sqlite"]
+db-postgres = ["jiezi-cloud-auth/db-postgres", "jiezi-cloud-vfs/db-postgres", "jiezi-cloud-storage/db-postgres", "jiezi-cloud-migration/db-postgres", "jiezi-cloud-kb/db-postgres"]
+db-mysql    = ["jiezi-cloud-auth/db-mysql",    "jiezi-cloud-vfs/db-mysql",    "jiezi-cloud-storage/db-mysql",    "jiezi-cloud-migration/db-mysql",    "jiezi-cloud-kb/db-mysql"]
 
 [dependencies]
 jiezi-cloud-core.workspace      = true
@@ -37,6 +37,7 @@ jiezi-cloud-preview.workspace   = true
 jiezi-cloud-share.workspace     = true
 jiezi-cloud-ai.workspace        = true
 jiezi-cloud-sync.workspace      = true
+jiezi-cloud-kb.workspace        = true
 jiezi-cloud-migration.workspace = true
 sea-orm.workspace               = true
 sea-orm-migration.workspace     = true

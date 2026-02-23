@@ -33,6 +33,9 @@ pub mod m20260220_000010_add_login_lockout;
 pub mod m20260220_000011_add_email_verification;
 pub mod m20260220_000012_create_upload_sessions;
 pub mod m20260220_000013_create_download_tokens;
+pub mod m20260220_000014_create_kb_notes;
+pub mod m20260220_000015_create_kb_backlinks_and_tags;
+pub mod m20260220_000016_add_kb_group_and_assets;
 
 use sea_orm_migration::prelude::*;
 
@@ -57,6 +60,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260220_000011_add_email_verification::Migration),
             Box::new(m20260220_000012_create_upload_sessions::Migration),
             Box::new(m20260220_000013_create_download_tokens::Migration),
+            Box::new(m20260220_000014_create_kb_notes::Migration),
+            Box::new(m20260220_000015_create_kb_backlinks_and_tags::Migration),
+            Box::new(m20260220_000016_add_kb_group_and_assets::Migration),
         ]
     }
 }

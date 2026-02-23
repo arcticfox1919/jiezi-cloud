@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use jiezi_cloud_core::{
     error::AppError,
+    events::DomainEvent,
     models::{backend::ReplicationPolicy, file::FileNode},
     types::{FileId, UserId},
 };
@@ -377,6 +378,13 @@ pub async fn complete(
 
     // Mark session complete and clean up temp files.
     state.upload_sessions.mark_complete(&session_id).await?;
+
+    // Publish domain event so KB indexer (and future subscribers) react.
+    let _ = state.domain_events.send(DomainEvent::FileUploaded {
+        file_id: node.id.clone(),
+        user_id,
+        space_id: node.space_id.clone(),
+    });
 
     Ok(HttpResponse::Created().json(node))
 }

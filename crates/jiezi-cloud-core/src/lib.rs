@@ -32,6 +32,6 @@ pub mod types;
 
 pub use error::{AppError, AppResult};
 pub use types::{
-    Action, BackendId, ChunkId, FileId, HealthStatus, PageRequest, PageResponse, ResourceRef,
-    ShareId, SpaceId, TaskId, UserId,
+    Action, BackendId, ChunkId, FileId, HealthStatus, KbNoteId, PageRequest, PageResponse,
+    ResourceRef, ShareId, SpaceId, TaskId, UserId,
 };

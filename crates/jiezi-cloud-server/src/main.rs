@@ -75,6 +75,33 @@ async fn main() -> std::io::Result<()> {
     );
 
     // ── Step 2: Open database connection pool ─────────────────────────────────
+    // SQLite `mode=rwc` creates the *file* but NOT missing parent directories.
+    // Ensure the data directory exists before handing the URL to SeaORM.
+    if cfg.database.url.starts_with("sqlite:") {
+        let path_str = cfg
+            .database
+            .url
+            .trim_start_matches("sqlite:")
+            .split('?')
+            .next()
+            .unwrap_or("");
+        if !path_str.is_empty() && path_str != ":memory:" {
+            let db_path = std::path::Path::new(path_str);
+            if let Some(parent) = db_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .unwrap_or_else(|e| {
+                        error!(
+                            error = %e,
+                            dir = %parent.display(),
+                            "Failed to create database directory"
+                        );
+                        std::process::exit(1);
+                    });
+            }
+        }
+    }
+
     let mut conn_opts = ConnectOptions::new(&cfg.database.url);
     conn_opts
         .max_connections(cfg.database.max_connections)
@@ -165,6 +192,18 @@ async fn main() -> std::io::Result<()> {
     // Download tokens: scan every 60 minutes to purge expired rows.
     app_state.upload_sessions.clone().spawn_gc(10);
     app_state.download_tokens.clone().spawn_gc(60);
+
+    // ── Step 7d: KB domain-event indexer ─────────────────────────────────────
+    //
+    // Subscribes to the domain event bus and automatically registers /
+    // re-indexes / unregisters KB notes when Markdown files are uploaded,
+    // moved, or permanently deleted.
+    let _kb_indexer = jiezi_cloud_kb::indexer::start(
+        app_state.domain_events.subscribe(),
+        app_state.kb.clone(),
+        app_state.vfs.clone(),
+    );
+    info!("KB indexer task started");
 
     // ── Step 8a: Start QUIC file-transfer server ──────────────────────────────
     if cfg.quic.enabled {

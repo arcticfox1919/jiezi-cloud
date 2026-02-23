@@ -14,6 +14,7 @@ members = [
     "crates/jiezi-cloud-migration",
     "crates/jiezi-cloud-config",
     "crates/jiezi-cloud-integrity",
+    "crates/jiezi-cloud-kb",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -133,7 +134,8 @@ reqwest_dav    = "0.3"
 
 # ── Search ────────────────────────────────────────────────────────────────────
 tantivy        = "0.22"
-
+# ── Markdown parsing ────────────────────────────────────────────────────────
+pulldown-cmark = { version = "0.12", default-features = false }
 # ── Crate inter-dependencies ──────────────────────────────────────────────────
 jiezi-cloud-core      = { path = "crates/jiezi-cloud-core" }
 jiezi-cloud-config    = { path = "crates/jiezi-cloud-config" }
@@ -147,6 +149,7 @@ jiezi-cloud-share     = { path = "crates/jiezi-cloud-share" }
 jiezi-cloud-ai        = { path = "crates/jiezi-cloud-ai" }
 jiezi-cloud-sync      = { path = "crates/jiezi-cloud-sync" }
 jiezi-cloud-migration = { path = "crates/jiezi-cloud-migration" }
+jiezi-cloud-kb        = { path = "crates/jiezi-cloud-kb" }
 
 # ── Workspace-wide lints ──────────────────────────────────────────────────────
 [workspace.lints.rust]

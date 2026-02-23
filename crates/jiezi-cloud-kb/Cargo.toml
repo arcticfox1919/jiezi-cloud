@@ -1,0 +1,30 @@
+[package]
+name    = "jiezi-cloud-kb"
+version = "0.1.0"
+edition = "2024"
+description = "Knowledge-base layer: Markdown indexing, WikiLink backlinks, and blog publishing"
+
+# ─── Database backend feature flags ──────────────────────────────────────────
+# Must match the feature selected for jiezi-cloud-server.
+[features]
+default     = ["db-sqlite"]
+db-sqlite   = ["sea-orm/sqlx-sqlite",   "sea-orm/runtime-tokio-native-tls"]
+db-postgres = ["sea-orm/sqlx-postgres", "sea-orm/runtime-tokio-native-tls"]
+db-mysql    = ["sea-orm/sqlx-mysql",    "sea-orm/runtime-tokio-native-tls"]
+
+[dependencies]
+jiezi-cloud-core.workspace    = true
+
+sea-orm.workspace      = true
+tokio.workspace        = true
+async-trait.workspace  = true
+serde.workspace        = true
+serde_json.workspace   = true
+uuid.workspace         = true
+chrono.workspace       = true
+tracing.workspace      = true
+thiserror.workspace    = true
+bytes.workspace        = true
+
+# Markdown / WikiLink parsing
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }

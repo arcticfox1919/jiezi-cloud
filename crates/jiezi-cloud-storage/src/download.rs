@@ -17,12 +17,14 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use tokio::sync::mpsc;
 
 use jiezi_cloud_core::{
     error::{AppError, AppResult},
+    traits::file_content::FileContentReader,
     types::FileId,
 };
 
@@ -242,5 +244,16 @@ impl DownloadService {
             .all(&self.db)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
+    }
+}
+
+// ─── FileContentReader impl ───────────────────────────────────────────────────
+
+/// Allow upper-layer crates to read file bytes through the trait boundary
+/// without taking a hard dependency on `jiezi-cloud-storage` internals.
+#[async_trait]
+impl FileContentReader for DownloadService {
+    async fn read_file(&self, file_id: &FileId) -> AppResult<Bytes> {
+        DownloadService::read_file(self, file_id).await
     }
 }

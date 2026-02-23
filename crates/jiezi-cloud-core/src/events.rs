@@ -78,6 +78,17 @@ pub enum DomainEvent {
     SpaceCreated { space_id: SpaceId, owner_id: UserId },
 
     /// A collaborator has been added to a space.
+
+    // ── Knowledge-base lifecycle ───────────────────────────────────────────
+    /// A `.md` file has been registered into the KB index for the first time.
+    KbNoteIndexed { file_node_id: FileId, space_id: SpaceId },
+
+    /// A KB note's content has changed and its backlinks / FTS entry were
+    /// re-parsed and updated.
+    KbNoteReindexed { file_node_id: FileId },
+
+    /// KB metadata for a permanently-deleted file has been cleaned up.
+    KbNoteUnregistered { file_node_id: FileId },
     SpaceMemberAdded { space_id: SpaceId, user_id: UserId, role: Role, added_by: UserId },
 
     /// A collaborator has been removed from a space.

@@ -8,9 +8,13 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
 use sea_orm::DatabaseConnection;
+use tokio::sync::broadcast;
 
 use jiezi_cloud_auth::JwtManager;
-use jiezi_cloud_core::traits::{auth::AuthService, vfs::VfsService};
+use jiezi_cloud_core::{
+    events::DomainEvent,
+    traits::{auth::AuthService, kb::KbService, vfs::VfsService},
+};
 use jiezi_cloud_storage::{DownloadService, StorageManager, UploadService};
 
 use crate::repository::{
@@ -55,6 +59,21 @@ pub struct AppState {
     /// to `true` by `POST /api/v1/setup/complete`.  The setup-guard middleware
     /// reads this atomically on every request without touching the database.
     pub setup_completed: Arc<AtomicBool>,
+
+    // ── Domain event bus ──────────────────────────────────────────────────────
+
+    /// Internal in-process domain event bus.
+    ///
+    /// Upload and VFS mutation handlers publish events here.  Subscriber tasks
+    /// (KB indexer, future thumbnail generator, audit log, …) receive them via
+    /// `domain_events.subscribe()`.
+    pub domain_events: Arc<broadcast::Sender<DomainEvent>>,
+
+    // ── Knowledge-base layer ──────────────────────────────────────────────────
+
+    /// Knowledge-base service — Markdown indexing, WikiLink backlinks, blog
+    /// publishing.  `None` until the KB feature is fully configured.
+    pub kb: Arc<dyn KbService>,
 
     // ── File-transfer routing parameters ─────────────────────────────────────
 

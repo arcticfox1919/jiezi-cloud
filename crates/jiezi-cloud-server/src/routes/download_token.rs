@@ -50,10 +50,17 @@ pub fn configure_token(cfg: &mut web::ServiceConfig) {
 pub struct IssueTokenRequest {
     /// Token lifetime in seconds.  Capped at 7 days server-side.
     /// Defaults to 3 600 s (1 hour) when absent.
+    /// Ignored when `permanent` is `true`.
     pub ttl_secs: Option<u64>,
     /// When `true` the token is invalidated after the first download.
     #[serde(default)]
     pub one_time: bool,
+    /// When `true` the token never expires (100-year TTL).
+    ///
+    /// Intended for image-bed / KB asset URLs embedded in Markdown files.
+    /// Incompatible with `one_time = true`.
+    #[serde(default)]
+    pub permanent: bool,
 }
 
 /// Response body for `POST /download/{id}/token`.
@@ -64,8 +71,11 @@ pub struct IssueTokenResponse {
     /// Full URL path the recipient can use to download the file.
     pub url: String,
     /// Unix timestamp (seconds) at which the token expires.
+    /// When `permanent` is `true` this is approximately 100 years from now.
     pub expires_at: i64,
     pub one_time: bool,
+    /// `true` when the token was issued with a 100-year (permanent) TTL.
+    pub permanent: bool,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -99,7 +109,11 @@ pub async fn issue_token(
     // Verify the file exists before issuing a token.
     state.vfs.get_node(&file_id).await?;
 
-    let ttl = body.ttl_secs.unwrap_or(DEFAULT_TOKEN_TTL_SECS);
+    let ttl = if body.permanent {
+        0 // repository interprets 0 as 100-year permanent token
+    } else {
+        body.ttl_secs.unwrap_or(DEFAULT_TOKEN_TTL_SECS)
+    };
     let token_record = state
         .download_tokens
         .create(&file_id, &user_id, ttl, body.one_time)
@@ -115,6 +129,7 @@ pub async fn issue_token(
         url,
         expires_at: token_record.expires_at.timestamp(),
         one_time: token_record.one_time,
+        permanent: ttl == 0,
     }))
 }
 

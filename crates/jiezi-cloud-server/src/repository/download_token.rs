@@ -73,8 +73,9 @@ impl DownloadTokenRepository {
 
     /// Issue a new download token for `file_id`.
     ///
-    /// - `ttl_secs`: lifetime in seconds from now (capped at 7 days internally
-    ///   to prevent unbounded tokens; callers may enforce stricter limits).
+    /// - `ttl_secs`: lifetime in seconds from now.  Pass `0` for a permanent
+    ///   token (no expiry) — suitable for image-bed / KB asset URLs.  Normal
+    ///   short-lived tokens are capped at 7 days.
     /// - `one_time`: if `true`, the token is invalidated after one successful use.
     pub async fn create(
         &self,
@@ -83,10 +84,15 @@ impl DownloadTokenRepository {
         ttl_secs: u64,
         one_time: bool,
     ) -> AppResult<DownloadToken> {
-        // Clamp to max 7 days to prevent indefinite tokens.
-        let ttl_secs = ttl_secs.min(7 * 24 * 3600);
         let now = Utc::now();
-        let expires_at = now + chrono::Duration::seconds(ttl_secs as i64);
+        // ttl_secs == 0 → permanent token (100-year expiry, practically infinite).
+        // Otherwise clamp to max 7 days for ordinary short-lived tokens.
+        let expires_at = if ttl_secs == 0 {
+            now + chrono::Duration::days(365 * 100)
+        } else {
+            let ttl_secs = ttl_secs.min(7 * 24 * 3600);
+            now + chrono::Duration::seconds(ttl_secs as i64)
+        };
 
         // 128-bit random token encoded as 32 lowercase hex chars.
         let token = Uuid::new_v4().to_string().replace('-', "");

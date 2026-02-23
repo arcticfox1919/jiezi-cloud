@@ -39,6 +39,7 @@ use bytes::Bytes;
 use serde::Deserialize;
 
 use jiezi_cloud_core::error::AppError;
+use jiezi_cloud_core::events::DomainEvent;
 use jiezi_cloud_core::models::backend::ReplicationPolicy;
 use jiezi_cloud_core::models::file::FileNode;
 use jiezi_cloud_core::types::{FileId, PageRequest, UserId};
@@ -213,12 +214,22 @@ pub async fn create_directory(
 )]
 pub async fn rename(
     state: web::Data<AppState>,
-    _auth: AuthUser,
-    path: web::Path<String>,
-    body: web::Json<RenameBody>,
+    auth:  AuthUser,
+    path:  web::Path<String>,
+    body:  web::Json<RenameBody>,
 ) -> Result<HttpResponse, ApiError> {
-    let id = parse_file_id(&path.into_inner())?;
+    let id      = parse_file_id(&path.into_inner())?;
+    let user_id = parse_user_id(&auth.0.sub)?;
+    // Fetch the current name before the rename for the domain event.
+    let old_name = state.vfs.get_node(&id).await?.name;
     let node = state.vfs.rename(&id, &body.new_name).await?;
+    let _ = state.domain_events.send(DomainEvent::FileMoved {
+        file_id: node.id.clone(),
+        user_id,
+        new_parent_id: None,
+        old_name,
+        new_name: body.new_name.clone(),
+    });
     Ok(HttpResponse::Ok().json(node))
 }
 
@@ -237,13 +248,23 @@ pub async fn rename(
 )]
 pub async fn move_node(
     state: web::Data<AppState>,
-    _auth: AuthUser,
-    path: web::Path<String>,
-    body: web::Json<MoveBody>,
+    auth:  AuthUser,
+    path:  web::Path<String>,
+    body:  web::Json<MoveBody>,
 ) -> Result<HttpResponse, ApiError> {
-    let id = parse_file_id(&path.into_inner())?;
+    let id         = parse_file_id(&path.into_inner())?;
     let new_parent = parse_file_id(&body.new_parent_id)?;
+    let user_id    = parse_user_id(&auth.0.sub)?;
+    // Capture the name before the move (name is unchanged by a pure move).
+    let name = state.vfs.get_node(&id).await?.name;
     let node = state.vfs.move_node(&id, &new_parent).await?;
+    let _ = state.domain_events.send(DomainEvent::FileMoved {
+        file_id: node.id.clone(),
+        user_id,
+        new_parent_id: Some(new_parent),
+        old_name: name.clone(),
+        new_name: name,
+    });
     Ok(HttpResponse::Ok().json(node))
 }
 
@@ -309,11 +330,16 @@ pub async fn restore(
 )]
 pub async fn permanent_delete(
     state: web::Data<AppState>,
-    _auth: AuthUser,
-    path: web::Path<String>,
+    auth:  AuthUser,
+    path:  web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
-    let id = parse_file_id(&path.into_inner())?;
+    let id      = parse_file_id(&path.into_inner())?;
+    let user_id = parse_user_id(&auth.0.sub)?;
     state.vfs.permanent_delete(&id).await?;
+    let _ = state.domain_events.send(DomainEvent::FilePermanentlyDeleted {
+        file_id: id,
+        user_id,
+    });
     Ok(HttpResponse::NoContent().finish())
 }
 
@@ -508,6 +534,13 @@ pub async fn upload_file(
             // up by the future garbage-collector run.
             e
         })?;
+
+    // Publish domain event so KB indexer (and future subscribers) react.
+    let _ = state.domain_events.send(DomainEvent::FileUploaded {
+        file_id: node.id.clone(),
+        user_id: owner_id,
+        space_id: node.space_id.clone(),
+    });
 
     Ok(HttpResponse::Created().json(node))
 }

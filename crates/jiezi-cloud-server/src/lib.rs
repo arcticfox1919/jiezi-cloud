@@ -28,6 +28,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
+use tokio::sync::broadcast;
 
 use jiezi_cloud_auth::{
     EmailService, EmailOtpRepository, JwtManager,
@@ -35,6 +36,15 @@ use jiezi_cloud_auth::{
     AuthServiceImpl,
 };
 use jiezi_cloud_config::AppConfig;
+use jiezi_cloud_core::{
+    events::DomainEvent,
+    traits::{
+        file_content::FileContentReader,
+        kb::KbService,
+        search::{NoopSearchEngine, SearchEngine},
+    },
+};
+use jiezi_cloud_kb::{repository::KbRepository, KbServiceImpl};
 use jiezi_cloud_storage::{DownloadService, LocalFsBackend, StorageManager, UploadService};
 use jiezi_cloud_vfs::{repository::FileNodeRepository, VfsServiceImpl};
 
@@ -178,6 +188,26 @@ pub async fn build_app_state(
 
     let settings_repo = SystemSettingsRepository::new(db.clone());
 
+    // ── Domain event bus ──────────────────────────────────────────────────────
+    //
+    // A broadcast channel with a generous buffer so slow subscribers (KB
+    // indexer, future audit log) do not block upload handlers.  The returned
+    // `domain_event_rx` is intentionally dropped here — each subscriber calls
+    // `domain_events.subscribe()` to get its own receiver.
+    let (domain_event_tx, _domain_event_rx) = broadcast::channel::<DomainEvent>(512);
+    let domain_events = Arc::new(domain_event_tx);
+
+    // ── Knowledge-base service ────────────────────────────────────────────────
+    let kb_repo = KbRepository::new(db.clone());
+    let file_reader: Arc<dyn FileContentReader> = Arc::new(download.clone());
+    let search_engine: Arc<dyn SearchEngine> = Arc::new(NoopSearchEngine);
+    let kb: Arc<dyn KbService> = Arc::new(KbServiceImpl::new(
+        kb_repo,
+        vfs_service.clone(),
+        file_reader,
+        search_engine,
+    ));
+
     state::AppState {
         db,
         auth: auth_service,
@@ -190,6 +220,8 @@ pub async fn build_app_state(
         download_tokens,
         settings: settings_repo,
         setup_completed: Arc::new(AtomicBool::new(setup_completed)),
+        domain_events,
+        kb,
         quic_port: cfg.quic.enabled.then_some(cfg.quic.port),
         tunnel_enabled: cfg.tunnel.enabled,
         large_file_threshold: cfg.storage.large_file_threshold_bytes,
