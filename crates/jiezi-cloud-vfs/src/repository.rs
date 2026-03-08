@@ -461,7 +461,12 @@ impl FileNodeRepository {
         let am = new_directory_active_model(id, None, space_id, owner_id, "/");
         let m = am.insert(self.db()).await.map_err(|e| AppError::Database(e.to_string()))?;
         tree::insert_node_paths(self.db(), &id, None).await?;
-        model_to_file_node(m)
+        let root = model_to_file_node(m)?;
+        // Provision the standard personal directories on first use.
+        for name in ["Documents", "Pictures", "Videos", "Music"] {
+            self.create_directory(&id, name, owner_id).await?;
+        }
+        Ok(root)
     }
 
     /// Return all root nodes (nodes with `parent_id = NULL`) owned by `owner_id`.

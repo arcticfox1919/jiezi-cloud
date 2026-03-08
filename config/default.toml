@@ -46,8 +46,10 @@ dir              = "./data/backups/db"
 
 # ── File storage ──────────────────────────────────────────────────────────────
 [storage]
+# Directory where uploaded file chunks are stored on disk.
+# Override via env var JIEZI__STORAGE__LOCAL_ROOT or config/local.toml.
 local_root        = "./data/files"
-max_upload_bytes  = 10737418240   # 10 GiB
+max_upload_bytes  = 10737418240   # 10 GiB  (server-side hard cap for all clients)
 
 # Files >= this byte count are transferred via QUIC (lower latency for large files).
 # Files below this threshold use HTTP/2 multipart upload.

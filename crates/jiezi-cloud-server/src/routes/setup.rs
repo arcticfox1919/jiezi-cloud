@@ -45,6 +45,10 @@ pub struct SetupStatusResponse {
     pub setup_required: bool,
     /// Jiezi Cloud server version string.
     pub version: &'static str,
+    /// When `true` unauthenticated visitors may create new accounts.
+    /// `false` means invite-only / registration disabled by the administrator.
+    /// Always `false` while setup has not been completed.
+    pub registration_enabled: bool,
 }
 
 /// Request body for `POST /setup/complete`.
@@ -67,7 +71,8 @@ pub struct SetupCompleteRequest {
     /// Human-readable site name shown in the web UI and emails.
     pub site_name: String,
     /// Optional short description / tagline for the site.
-    #[serde(default)]
+    /// Accepts `null` or a missing field — both are treated as an empty string.
+    #[serde(default, deserialize_with = "deserialize_null_as_empty_string")]
     pub site_description: String,
     /// Allow unauthenticated visitors to register new accounts.
     /// Set to `false` for invite-only or enterprise deployments.
@@ -80,6 +85,16 @@ pub struct SetupCompleteRequest {
 
 fn default_max_upload_mb() -> u32 {
     512
+}
+
+/// Deserialise a JSON field that may be a string, `null`, or absent — all
+/// yielding an owned [`String`].  Without this helper `#[serde(default)]`
+/// alone falls through on explicit `null` values sent by some clients.
+fn deserialize_null_as_empty_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
 }
 
 /// Response body for a successful `POST /setup/complete`.
@@ -112,9 +127,16 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 )]
 pub async fn status(state: web::Data<AppState>) -> HttpResponse {
     let setup_required = !state.setup_completed.load(Ordering::Relaxed);
+    // Only meaningful after setup; defaults to false while uninitialised.
+    let registration_enabled = state
+        .settings
+        .get_bool("registration_enabled")
+        .await
+        .unwrap_or(false);
     HttpResponse::Ok().json(SetupStatusResponse {
         setup_required,
         version: env!("CARGO_PKG_VERSION"),
+        registration_enabled,
     })
 }
 

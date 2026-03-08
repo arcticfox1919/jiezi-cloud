@@ -84,6 +84,34 @@ pub enum AppError {
 /// Convenience type alias used throughout the codebase.
 pub type AppResult<T> = Result<T, AppError>;
 
+impl AppError {
+    /// Returns a stable, upper-case machine-readable identifier for this error.
+    ///
+    /// This string is included in every HTTP error response under the `"error"`
+    /// key so that API clients can branch on the error kind without parsing
+    /// the human-readable `"message"` field:
+    ///
+    /// ```json
+    /// { "code": 409, "error": "CONFLICT", "message": "conflict: username or email already taken" }
+    /// ```
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            AppError::NotFound(_)         => "NOT_FOUND",
+            AppError::Unauthorized(_)     => "UNAUTHORIZED",
+            AppError::Forbidden(_)        => "FORBIDDEN",
+            AppError::Conflict(_)         => "CONFLICT",
+            AppError::Gone(_)             => "GONE",
+            AppError::Validation(_)       => "VALIDATION_ERROR",
+            AppError::Storage(_)          => "STORAGE_ERROR",
+            AppError::Database(_)
+            | AppError::Serialization(_)
+            | AppError::Internal(_)       => "INTERNAL_ERROR",
+            AppError::PayloadTooLarge { .. } => "FILE_TOO_LARGE_FOR_WEB",
+            AppError::QuicRequired { .. }    => "QUIC_REQUIRED",
+        }
+    }
+}
+
 // ─── Standard library conversions ────────────────────────────────────────────
 
 impl From<std::io::Error> for AppError {

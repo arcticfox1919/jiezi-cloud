@@ -175,7 +175,11 @@ impl HealthStatus {
 // ─── Pagination ───────────────────────────────────────────────────────────────
 
 /// Pagination parameters sent by the client in query strings or request bodies.
+///
+/// All fields default to `page = 1` and `per_page = 20` when absent (e.g. when
+/// the query string is empty), so clients may omit them to request the first page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(default)]
 pub struct PageRequest {
     /// 1-based page number.
     pub page: u32,

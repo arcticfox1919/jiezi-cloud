@@ -75,6 +75,8 @@ pub struct LogoutBody {
 
 /// `POST /auth/register` — create a new account.
 ///
+/// Returns `403 Forbidden` when the site administrator has disabled public
+/// registration (`registration_enabled = false` in system settings).
 /// Returns `201 Created` with the [`User`] object on success.
 #[utoipa::path(
     post,
@@ -83,6 +85,7 @@ pub struct LogoutBody {
     responses(
         (status = 201, description = "User registered successfully", body = User),
         (status = 400, description = "Validation error"),
+        (status = 403, description = "Public registration is disabled"),
         (status = 409, description = "Username or email already taken"),
     ),
     tag = "auth"
@@ -91,6 +94,16 @@ pub async fn register(
     state: web::Data<AppState>,
     body: web::Json<RegisterRequest>,
 ) -> Result<HttpResponse, ApiError> {
+    let enabled = state
+        .settings
+        .get_bool("registration_enabled")
+        .await
+        .map_err(ApiError)?;
+    if !enabled {
+        return Err(ApiError(AppError::Forbidden(
+            "public registration is disabled on this server".into(),
+        )));
+    }
     let user = state.auth.register(body.into_inner()).await?;
     Ok(HttpResponse::Created().json(user))
 }
@@ -333,6 +346,16 @@ pub async fn send_register_otp(
     state: web::Data<AppState>,
     body:  web::Json<SendOtpRequest>,
 ) -> Result<HttpResponse, ApiError> {
+    let enabled = state
+        .settings
+        .get_bool("registration_enabled")
+        .await
+        .map_err(ApiError)?;
+    if !enabled {
+        return Err(ApiError(AppError::Forbidden(
+            "public registration is disabled on this server".into(),
+        )));
+    }
     state.auth.send_register_otp(body.into_inner()).await?;
     Ok(HttpResponse::NoContent().finish())
 }

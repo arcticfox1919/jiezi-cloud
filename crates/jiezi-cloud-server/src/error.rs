@@ -5,7 +5,7 @@
 //! status code and a uniform JSON body:
 //!
 //! ```json
-//! { "code": 404, "message": "not found: file xyz" }
+//! { "code": 404, "error": "NOT_FOUND", "message": "not found: file xyz" }
 //! ```
 //!
 //! For structured error variants (`PayloadTooLarge`, `QuicRequired`) the body
@@ -28,6 +28,8 @@ use jiezi_cloud_core::error::AppError;
 struct ErrorBody {
     /// HTTP status code (mirrors the response status line).
     code: u16,
+    /// Machine-readable error identifier (e.g. `"NOT_FOUND"`, `"CONFLICT"`).
+    error: &'static str,
     /// Human-readable error description.
     message: String,
 }
@@ -134,6 +136,7 @@ impl ResponseError for ApiError {
             }
             _ => HttpResponse::build(status).json(ErrorBody {
                 code: status.as_u16(),
+                error: self.0.error_code(),
                 message: self.0.to_string(),
             }),
         }

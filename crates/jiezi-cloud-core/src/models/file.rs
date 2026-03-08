@@ -20,9 +20,6 @@ pub enum NodeType {
     Symlink,
 }
 
-/// MIME type (e.g. `"image/jpeg"`, `"application/pdf"`).
-pub type MimeType = String;
-
 // ─── FileNode ─────────────────────────────────────────────────────────────────
 
 /// A node in the virtual file system — either a file or a directory.
@@ -40,8 +37,8 @@ pub struct FileNode {
     pub node_type: NodeType,
     /// File size in bytes.  Zero for directories.
     pub size: u64,
-    /// MIME type detected at upload time.
-    pub mime_type: Option<MimeType>,
+    /// MIME type detected at upload time (e.g. `"image/jpeg"`).
+    pub mime_type: Option<String>,
     /// SHA-256 hex digest of the full file content.
     pub content_hash: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -110,7 +107,7 @@ pub struct FileNodeBuilder {
     name: Option<String>,
     node_type: Option<NodeType>,
     size: u64,
-    mime_type: Option<MimeType>,
+    mime_type: Option<String>,
     content_hash: Option<String>,
     metadata: FileMetadata,
 }
@@ -156,7 +153,7 @@ impl FileNodeBuilder {
         self
     }
 
-    pub fn mime_type(mut self, mime_type: impl Into<MimeType>) -> Self {
+    pub fn mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
         self
     }
